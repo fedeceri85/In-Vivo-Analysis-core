@@ -2,6 +2,13 @@
 
 This repository contains a pipeline for analyzing calcium imaging data for spontaneous activity in the developing cochlea.
 
+## Contributing
+
+1. Do not push directly to template
+2. Create fork for changes
+3. Submit pull request
+4. Require maintainer review
+
 ## Project Structure
 
 - **notebooks/**: Jupyter notebooks for movie registration and segmentation and data processing 
