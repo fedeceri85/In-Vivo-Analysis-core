@@ -135,7 +135,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         thisMaxima = thisMaxima[thisMaxima!=0]
 
 
-        frameIntervalsToRemove = calculateFrameIntervalsToRemove(lastFrame-firstFrame,jumpFrames=thisMinima,winLeft=winLeft,winRight=winRight, jumpFramesMax=thisMaxima, winMaxLeft=winMaxLeft, winMaxRight=winMaxRight)
+        frameIntervalsToRemove = calculateFrameIntervalsToRemove(jumpFrames=thisMinima,winLeft=winLeft,winRight=winRight, jumpFramesMax=thisMaxima, winMaxLeft=winMaxLeft, winMaxRight=winMaxRight)
         try:
             frameIntervalsToRemove.extend(el['ExtraCorrectionIntervals'])
         except TypeError:
