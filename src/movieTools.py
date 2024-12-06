@@ -22,7 +22,7 @@ from skimage.io import imsave
 import shapely
 
 import os.path
-celltypeModel =  tf.keras.models.load_model(os.path.join(os.path.dirname(__file__), 'cellposemodels/model.h5')) # this model distinguish inner, outer and support cells
+celltypeModel =  tf.keras.models.load_model('C:/Users/LabAdmin/Documents/git-repos/In-Vivo-Analysis-core/notebooks/1-MotionCorrection and segmentation/Cell Classifier Train/model.h5') # this model distinguish inner, outer and support cells. Adjust the path accordingly
 #Size of the patches
 MODELHEIGHT = 172
 MODELWIDTH =   216
