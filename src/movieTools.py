@@ -15,6 +15,7 @@ import tifffile
 from math import floor, ceil
 from skimage import measure
 from cellpose import models
+import tensorflow as tf
 import pyclesperanto_prototype as pyp
 from skimage.measure import  regionprops_table
 from skimage.io import imsave
