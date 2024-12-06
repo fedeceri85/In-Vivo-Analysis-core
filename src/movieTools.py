@@ -20,7 +20,8 @@ from skimage.measure import  regionprops_table
 from skimage.io import imsave
 import shapely
 
-
+import os.path
+celltypeModel =  tf.keras.models.load_model(os.path.join(os.path.dirname(__file__), 'cellposemodels/model.h5')) # this model distinguish inner, outer and support cells
 #Size of the patches
 MODELHEIGHT = 172
 MODELWIDTH =   216
