@@ -51,6 +51,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
     xwRight = widgets.IntSlider(min=0,max=50,step=1,value=0,continuous_update=False,description='Right win')
     xwMinimaOrder = widgets.IntSlider(min=0,max=400,step=1,value=50,continuous_update=False,description='Order')
     lbl1 = widgets.Label('Minima',layout= widgets.Layout(display="flex", justify_content="center"))
+    smoothOrderInt = widgets.IntSlider(min=1,max=31,step=2,value=11,continuous_update=False,description='Smooth. ord.')
     #xwslice = widgets.IntSlider(min=0,max=2,step=1,value=0,continuous_update=False,description='Current slice',layout=widgets.Layout(width='95%'))
     xwMaxLeft = widgets.IntSlider(min=0,max=50,step=1,value=0,continuous_update=False,description='Left win')
     xwMaxRight = widgets.IntSlider(min=0,max=50,step=1,value=0,continuous_update=False,description='Right win')
@@ -123,17 +124,23 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             lastFrame = int(lastFrame)
         except:
             firstFrame,lastFrame = [0, getImgInfo(workingFolder)[2]]
+            if el['nChannels']==2:
+                lastFrame = lastFrame//2
 
         winLeft = el['Window left']
         winRight = el['Window right']
         thisMinima = allminima[el['Folder']]
         thisMinima = thisMinima[thisMinima!=0]
-
+    
         winMaxLeft = el['Window Max left']
         winMaxRight = el['Window Max right']
         thisMaxima = allmaxima[el['Folder']]
         thisMaxima = thisMaxima[thisMaxima!=0]
 
+        try:
+            nChannels = el['nChannels']
+        except:
+            nChannels = 1
 
         frameIntervalsToRemove = calculateFrameIntervalsToRemove(jumpFrames=thisMinima,winLeft=winLeft,winRight=winRight, jumpFramesMax=thisMaxima, winMaxLeft=winMaxLeft, winMaxRight=winMaxRight)
         try:
@@ -146,10 +153,9 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             pass
 
         lblCurrent.value = 'Jump-corrected movie'
-        tb.loadFile(workingFolder, applyGaussian = True)
+        tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels)
         pbar.max = tb.nFrames
         tb.loadFrameInterval(firstFrame, lastFrame,frameIntervalsToRemove=frameIntervalsToRemove,pbar=pbar)
-
         try:
             tb.app.layers.remove('Masks')
         except:
@@ -162,6 +168,12 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             tb.app.layers.remove('Annotations')
         except:
             pass   
+
+        if nChannels==2:
+            tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels)
+
+            tb.loadFrameInterval(firstFrame, lastFrame,frameIntervalsToRemove=frameIntervalsToRemove,pbar=pbar, layerName='Image channel 2',channel=2)
+
 
     b.on_click(process_original_cbk)
 
@@ -177,7 +189,12 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         except:
             firstFrame,lastFrame = [0, getImgInfo(workingFolder)[2]]
 
-        tb.loadFile(workingFolder, applyGaussian = True)
+        try:
+            nChannels = el['nChannels']
+        except:
+            nChannels = 1
+
+        tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels)
         pbar.max = tb.nFrames
         tb.loadFrameInterval(firstFrame, lastFrame,frameIntervalsToRemove=None,pbar=pbar)
 
@@ -397,7 +414,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
 
 
     tb.app.dims.events.connect(update_slider)
-    sliderStack = widgets.VBox([xw,valid1,valid2,valid3,valid4,valid5])
+    sliderStack = widgets.VBox([xw,smoothOrderInt,valid1,valid2,valid3,valid4,valid5])
     buttonStack = widgets.VBox([lblCurrent,b,b2,b4,b4bis,b5,b3])
     buttonStack2 = widgets.VBox([button,lbl3,buttonTemplate,xwTemplateSlider])
     buttonStack3 = widgets.HBox([prevButton, nextButton])
@@ -498,6 +515,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         f(xw.value,xwLeft.value,xwRight.value,xwMinimaOrder.value,xwMaxLeft.value,xwMaxRight.value,xwMaximaOrder.value)
     xwTemplateSlider.observe(template_value_changed,names='value')
 
+    def smooth_value_changed(change):
+        master.loc[xw.value,'SmoothOrder'] = smoothOrderInt.value
+        f(xw.value,xwLeft.value,xwRight.value,xwMinimaOrder.value,xwMaxLeft.value,xwMaxRight.value,xwMaximaOrder.value)
+    smoothOrderInt.observe(smooth_value_changed,names='value')
 
     #Main function executed by ipywidget interactive output 
     def f(x, window_size_left, window_size_right, minima_order, windowMax_size_left,windowMax_size_right,maxima_order,drive=None):
@@ -559,12 +580,24 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         except:
             firstFrame,lastFrame = [0,-1]
 
-            
+        try:
+            smoothOrder = el['SmoothOrder']
+            if (smoothOrder%2)==0:
+                smoothOrder = smoothOrder+1
+                master.loc[xw.value,'SmoothOrder'] = smoothOrder
+        
+        except:
+            smoothOrder = 11
+        smoothOrderInt.value = smoothOrder
+
         if os.path.exists(os.path.join(workingFolder,'corrReference.npy')):
                 r,s,t = tu.loadRoisFromFile(os.path.join(workingFolder,'corrReference.npy'))
                 s = s[firstFrame:lastFrame,:]
-                for i in np.arange(s.shape[1]):
-                    s[:,i] = savgol_filter(s[:,i],11,1)
+                if smoothOrder!=1:
+                    for i in np.arange(s.shape[1]):
+                        s[:,i] = savgol_filter(s[:,i],smoothOrder,1)
+                if el['nChannels']==2:
+                    s = s[::2,:]    
                 ttrace = s.mean(1)
         elif  not pd.isna(el['rois']):
             if os.path.exists(os.path.join(workingFolder,el['rois'])):
@@ -691,7 +724,6 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
 
 
         ttrace2[ttrace2 == - 10000] = np.nan
-
 
         with fig.batch_update():
             fig.data[0]['x'] = np.arange(ttrace.shape[0])

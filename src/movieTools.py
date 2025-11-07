@@ -15,14 +15,14 @@ import tifffile
 from math import floor, ceil
 from skimage import measure
 from cellpose import models
-import tensorflow as tf
+#import tensorflow as tf
 import pyclesperanto_prototype as pyp
 from skimage.measure import  regionprops_table
 from skimage.io import imsave
 import shapely
 
 import os.path
-celltypeModel =  tf.keras.models.load_model('C:/Users/LabAdmin/Documents/git-repos/In-Vivo-Analysis-core/notebooks/1-MotionCorrection and segmentation/Cell Classifier Train/model.h5') # this model distinguish inner, outer and support cells. Adjust the path accordingly
+#celltypeModel =  tf.keras.models.load_model('C:/Users/LabAdmin/Documents/git-repos/In-Vivo-Analysis-core/notebooks/1-MotionCorrection and segmentation/Cell Classifier Train/model.h5') # this model distinguish inner, outer and support cells. Adjust the path accordingly
 #Size of the patches
 MODELHEIGHT = 172
 MODELWIDTH =   216
@@ -163,7 +163,7 @@ class thorlabsFile():
         Apply motion correction to loaded frames.
     """
    
-    def __init__(self,folder=None,filename = FILENAME,applyGaussian = True,showViewer = True) -> None:
+    def __init__(self,folder=None,filename = FILENAME,applyGaussian = True,showViewer = True, ) -> None:
         if folder is not None:
             self.folder = folder
             self.fullpath = os.path.join(self.folder,filename)
@@ -175,13 +175,15 @@ class thorlabsFile():
             self.currentLastFrame = 0
             self.applyGaussian = applyGaussian
             self.array = np.empty((0,self.height,self.width),dtype=np.uint16)
+            
+
         if showViewer:
             self.app = napari.Viewer()
         else:
             self.app = None
         #    self.app.add_image(self.array)
 
-    def loadFile(self,folder,filename = FILENAME, applyGaussian=True):
+    def loadFile(self,folder,filename = FILENAME, applyGaussian=True, nChannels=1):
 
         try:
             self.r.close()
@@ -198,10 +200,12 @@ class thorlabsFile():
         self.currentLastFrame = 0
         self.applyGaussian = applyGaussian
         self.array = np.empty((0,self.height,self.width),dtype=np.uint16)
+        self.nChannels = nChannels
 
-    
+        if self.nChannels==2:
+            self.nFrames = self.nFrames//2
 
-    def loadWholeStack(self,start=0,end=-1,pbar=None):
+    def loadWholeStack(self,start=0,end=-1,pbar=None,channel = 1):
 
         
         if end == -1:
@@ -211,11 +215,24 @@ class thorlabsFile():
 
         if totalFramesSize<=MAXCHUNKSIZE:
             
-            offset = start*self.frameSize
-            self.r.seek(offset)
-            st = self.r.read(totalFramesSize)
-            stack = cp.frombuffer(st,dtype = np.uint16).reshape((totalFrames,self.height,self.width))
+            offset = start*self.frameSize*self.nChannels
+            if channel==2:
+                offset += self.frameSize
+            elif channel>2:
+                raise NotImplementedError('channel >2 not implemented yet')
 
+            self.r.seek(offset)
+            st = self.r.read(totalFramesSize*self.nChannels)
+            
+
+
+            stack = cp.frombuffer(st,dtype = np.uint16).reshape((totalFrames*self.nChannels,self.height,self.width))
+            print(stack.shape)
+            if self.nChannels==2:
+                stack = stack[::2,:,:]  #Take only channel 1
+
+            elif self.nChannels>2:
+                raise NotImplementedError('nChannels >2 not implemented yet')
 
             if self.applyGaussian:
                 stack = gaussian_filter(stack,(0,2,2))
@@ -225,13 +242,22 @@ class thorlabsFile():
         else:
             chunksizeFrames = MAXCHUNKSIZE//(self.frameSize)  #number of frames in a chunk
             nchunks = totalFrames//chunksizeFrames
+
             remainderFrames = totalFrames%chunksizeFrames
             stack3 = []
             for i in range(nchunks):
-                offset = (start+i*chunksizeFrames)*self.frameSize
+                offset = (start+i*chunksizeFrames)*self.frameSize*self.nChannels
+                if channel==2:
+                    offset += self.frameSize
+
                 self.r.seek(offset)
-                st = self.r.read(self.frameSize*chunksizeFrames)
-                stack = cp.frombuffer(st,dtype = np.uint16).reshape((chunksizeFrames,self.height,self.width))
+                st = self.r.read(self.frameSize*chunksizeFrames*self.nChannels)
+                stack = cp.frombuffer(st,dtype = np.uint16).reshape((chunksizeFrames*self.nChannels,self.height,self.width))
+                if self.nChannels==2:
+                    stack = stack[::2,:,:]  #Take only channel 1
+                elif self.nChannels>2:
+                    raise NotImplementedError('nChannels >2 not implemented yet')
+
                 if self.applyGaussian:
                     stack = gaussian_filter(stack,(0,2,2))
                     stack = gaussian_filter(stack,(2,0,0))
@@ -242,10 +268,22 @@ class thorlabsFile():
                     pbar.value +=chunksizeFrames 
 
             if remainderFrames != 0:
-                offset = (start+nchunks*chunksizeFrames)*self.frameSize
+                offset = (start+nchunks*chunksizeFrames)*self.frameSize*self.nChannels
+                if channel==2:
+                    offset += self.frameSize
+
                 self.r.seek(offset)
-                st = self.r.read(self.frameSize*remainderFrames)
-                stack = cp.frombuffer(st,dtype = np.uint16).reshape((remainderFrames,self.height,self.width))
+                st = self.r.read(self.frameSize*remainderFrames*self.nChannels)
+                if channel==1:
+                    stack = cp.frombuffer(st,dtype = np.uint16).reshape((remainderFrames*self.nChannels,self.height,self.width))
+                elif channel==2:
+                    stack = cp.frombuffer(st,dtype = np.uint16).reshape(((remainderFrames*self.nChannels-1),self.height,self.width))
+
+                if self.nChannels==2:
+                    stack = stack[::2,:,:]  #Take only channel 1
+                elif self.nChannels>2:
+                    raise NotImplementedError('nChannels >2 not implemented yet')
+                
                 if self.applyGaussian:
                     stack = gaussian_filter(stack,(0,2,2))
                     stack = gaussian_filter(stack,(2,0,0))
@@ -254,7 +292,9 @@ class thorlabsFile():
 
                 if pbar is not None:
                     pbar.value = self.nFrames
-                
+        self.r.seek(0)
+
+
         cp._default_memory_pool.free_all_blocks()    
         return stack3
 
@@ -288,9 +328,9 @@ class thorlabsFile():
 
         self.currentLastFrame = self.array.shape[0]
 
-    def loadFrameInterval(self,start,end,frameIntervalsToRemove = None,pbar=None):
+    def loadFrameInterval(self,start,end,frameIntervalsToRemove = None,pbar=None,layerName='Image',channel=1):
         self.currentLastFrame=start
-        newStack = self.loadWholeStack(start=self.currentLastFrame,end = end,pbar=pbar)
+        newStack = self.loadWholeStack(start=self.currentLastFrame,end = end,pbar=pbar,channel=channel)
         self.array= np.vstack([self.array, *newStack])
         
         if frameIntervalsToRemove is not None:  
@@ -303,10 +343,19 @@ class thorlabsFile():
         del newStack
         if self.app is not None:
             try:
-                l = self.app.layers['Image']
+                l = self.app.layers[layerName]
                 l.data = self.array
             except:
-                self.app.add_image(self.array)
+                if self.nChannels == 2:
+                    if channel == 1:
+                        colormap = 'green'
+                    else:
+                        colormap = 'red'
+                    self.app.add_image(self.array, name=layerName, colormap=colormap, blending='additive')
+                elif self.nChannels >2:
+                    raise NotImplementedError('nChannels >2 not implemented yet')
+                else:
+                    self.app.add_image(self.array, name=layerName)
 
         self.currentLastFrame = self.array.shape[0]
 
@@ -610,6 +659,8 @@ def jupyterPy(tb):
 
         if 'Masks' in [layer.name for layer in tb.app.layers]:
             mask = tb.app.layers['Masks'].data
+
+            
             l = tb.app.layers['Masks']
             
             # reset label number
@@ -717,9 +768,9 @@ def jupyterPy(tb):
             l.data = arr
         except:
             tb.app.add_image(arr,name='Avg')
-        model = models.Cellpose(gpu=False, model_type='cyto')
+        model = models.CellposeModel(gpu=True, model_type='cyto')
 
-        masks, flows, styles, diams = model.eval(arr, diameter=radiusWidget.value, channels=[0,0], net_avg=True,cellprob_threshold = cellprobSlider.value,
+        masks, flows, styles = model.eval(arr, diameter=radiusWidget.value, channels=[0,0],cellprob_threshold = cellprobSlider.value,
                                                  flow_threshold=0)
 
         #sort masks from left to right
@@ -829,7 +880,7 @@ def jupyterPy(tb):
                 pass
             else:
                 out = out.reshape((1,MODELHEIGHT,MODELWIDTH,1))
-                celltype = np.argmax(celltypeModel.predict(out))
+                celltype = 0 # np.argmax(celltypeModel.predict(out))
                 annotations[masks==r.label] = celltype+1
         annotations = annotations[300:-300,300:-300]
         try:
