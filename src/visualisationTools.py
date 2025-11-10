@@ -153,7 +153,18 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             pass
 
         lblCurrent.value = 'Jump-corrected movie'
-        tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels)
+
+        try:
+            spatialGaussian = el['SpatialGaussian']
+        except:
+            spatialGaussian = 2
+
+        try:
+            temporalGaussian = el['TemporalGaussian']
+        except:
+            temporalGaussian = 2
+
+        tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels,spatialGaussian=spatialGaussian,temporalGaussian=temporalGaussian)
         pbar.max = tb.nFrames
         tb.loadFrameInterval(firstFrame, lastFrame,frameIntervalsToRemove=frameIntervalsToRemove,pbar=pbar)
         try:
@@ -170,7 +181,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             pass   
 
         if nChannels==2:
-            tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels)
+            tb.loadFile(workingFolder, applyGaussian = True,nChannels=nChannels,spatialGaussian=spatialGaussian,temporalGaussian=temporalGaussian)
 
             tb.loadFrameInterval(firstFrame, lastFrame,frameIntervalsToRemove=frameIntervalsToRemove,pbar=pbar, layerName='Image channel 2',channel=2)
 

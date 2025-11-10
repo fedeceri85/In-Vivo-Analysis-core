@@ -183,7 +183,7 @@ class thorlabsFile():
             self.app = None
         #    self.app.add_image(self.array)
 
-    def loadFile(self,folder,filename = FILENAME, applyGaussian=True, nChannels=1):
+    def loadFile(self,folder,filename = FILENAME, applyGaussian=True, nChannels=1,spatialGaussian=2,temporalGaussian=2):
 
         try:
             self.r.close()
@@ -199,6 +199,9 @@ class thorlabsFile():
 
         self.currentLastFrame = 0
         self.applyGaussian = applyGaussian
+        self.spatialGaussianSigma = spatialGaussian
+        self.temporalGaussianSigma = temporalGaussian
+
         self.array = np.empty((0,self.height,self.width),dtype=np.uint16)
         self.nChannels = nChannels
 
@@ -235,8 +238,8 @@ class thorlabsFile():
                 raise NotImplementedError('nChannels >2 not implemented yet')
 
             if self.applyGaussian:
-                stack = gaussian_filter(stack,(0,2,2))
-                stack = gaussian_filter(stack,(2,0,0))
+                stack = gaussian_filter(stack,(0,self.spatialGaussianSigma,self.spatialGaussianSigma))
+                stack = gaussian_filter(stack,(self.temporalGaussianSigma,0,0))
             stack3 = [cp.asnumpy(stack)]
             
         else:
@@ -259,8 +262,8 @@ class thorlabsFile():
                     raise NotImplementedError('nChannels >2 not implemented yet')
 
                 if self.applyGaussian:
-                    stack = gaussian_filter(stack,(0,2,2))
-                    stack = gaussian_filter(stack,(2,0,0))
+                    stack = gaussian_filter(stack,(0,self.spatialGaussianSigma,self.spatialGaussianSigma))
+                    stack = gaussian_filter(stack,(self.temporalGaussianSigma,0,0))
 
                 stack3.append(cp.asnumpy(stack))
                 
@@ -285,8 +288,8 @@ class thorlabsFile():
                     raise NotImplementedError('nChannels >2 not implemented yet')
                 
                 if self.applyGaussian:
-                    stack = gaussian_filter(stack,(0,2,2))
-                    stack = gaussian_filter(stack,(2,0,0))
+                    stack = gaussian_filter(stack,(0,self.spatialGaussianSigma,self.spatialGaussianSigma))
+                    stack = gaussian_filter(stack,(self.temporalGaussianSigma,0,0))
 
                 stack3.append(cp.asnumpy(stack))
 
