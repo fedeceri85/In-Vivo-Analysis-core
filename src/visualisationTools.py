@@ -610,6 +610,16 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
                 if el['nChannels']==2:
                     s = s[::2,:]    
                 ttrace = s.mean(1)
+        elif os.path.exists(os.path.join(workingFolder,'corrReference.csv')):
+                s = pd.read_csv(os.path.join(workingFolder,'corrReference.csv'),header=None)
+                s = s['Mean'].values
+                s = s[firstFrame:lastFrame]
+                if smoothOrder!=1:
+                    s = savgol_filter(s,smoothOrder,1)
+                if el['nChannels']==2:
+                    s = s[::2]
+                ttrace = s 
+                
         elif  not pd.isna(el['rois']):
             if os.path.exists(os.path.join(workingFolder,el['rois'])):
                 r,s,t = tu.loadRoisFromFile(os.path.join(workingFolder,el['rois']))
