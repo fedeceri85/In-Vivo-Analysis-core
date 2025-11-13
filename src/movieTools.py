@@ -538,11 +538,22 @@ def jupyterPy(tb):
     - numpy
     """
     
+    layersDropdown = widgets.Dropdown(
+        options=[layer.name for layer in tb.app.layers if layer._type_string=='image'],
+        description='Select img:',
+        disabled=False
+    )
+    
     plotButton =  widgets.Button(description='Plot ROIs',button_style = 'primary')
     justAvgButton =   widgets.Button(description='Avg image',button_style = 'primary')
     avgButton =   widgets.Button(description='Create HCs labels',button_style = 'primary')
     erodeButton =   widgets.Button(description='Erode labels',button_style = 'primary')
     exportROIsbutton =  widgets.Button(description='Export traces',button_style = 'success')
+
+    avgLimitLeft = widgets.IntText(value=0,description='Avg start frame:',disabled=False)
+    avgLimitRight = widgets.IntText(value=100,description='Avg end frame:',disabled=False)
+
+
 
     saveROIsbutton =  widgets.Button(description='Save labels',button_style = 'success')
     loadROIsbutton =  widgets.Button(description='Load labels',button_style = 'primary')
@@ -587,7 +598,9 @@ def jupyterPy(tb):
     saveKymoShapesButton =  widgets.Button(description='Save kymo shapes',button_style = 'primary')
     loadKymoShapesButton =  widgets.Button(description='Load kymo shapes',button_style = 'primary')
 
-    boxStack  = widgets.VBox([justAvgButton])
+    boxStack  = widgets.VBox([layersDropdown,justAvgButton, avgLimitLeft, avgLimitRight])
+
+
     boxStack2  = widgets.VBox([avgButton,erodeButton,classifyButton,radiusWidget,cellprobSlider])
     boxStack3 = widgets.VBox([saveROIsbutton,loadROIsbutton])
     boxStack8 = widgets.VBox([squarifyButton,squareROISSideWidget])
@@ -631,7 +644,22 @@ def jupyterPy(tb):
     
     ui = widgets.VBox([topBox,fig])
 
+    def update_layers_dropdown(event):
+        layersDropdown.options = [layer.name for layer in tb.app.layers if layer._type_string=='image']
+    
+    tb.app.layers.events.inserted.connect(update_layers_dropdown)
+    tb.app.layers.events.removed.connect(update_layers_dropdown)
+    tb.app.layers.events.reordered.connect(update_layers_dropdown)
 
+    def on_layer_selected(change):
+        selected_layer_name = change['new']
+        tb.array = tb.app.layers[selected_layer_name].data
+        # Do something with the selected layer
+        print(f"Selected layer: {selected_layer_name}")
+
+    layersDropdown.observe(on_layer_selected, names='value')
+
+    
     def on_plot_clicked(change):
         """
         Updates plots based on mask or wave ROI data in the viewer.
@@ -753,7 +781,7 @@ def jupyterPy(tb):
     exportROIsbutton.on_click(on_exportROIs_clicked)
 
     def on_justAvgButton_clicked(c):
-        arr = tb.app.layers['Image'].data.mean(0)
+        arr = tb.app.layers[layersDropdown.value].data[avgLimitLeft.value:avgLimitRight.value,:,:].mean(0)
 
         try:
             l = tb.app.layers['Avg']
@@ -764,7 +792,7 @@ def jupyterPy(tb):
 
     def on_avgButton_clciked(change):
 
-        arr = tb.app.layers['Image'].data.mean(0)
+        arr = tb.app.layers[layersDropdown.value].data[avgLimitLeft.value:avgLimitRight.value,:,:].mean(0)
 
         try:
             l = tb.app.layers['Avg']
