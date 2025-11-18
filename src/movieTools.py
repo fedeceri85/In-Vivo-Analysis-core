@@ -228,8 +228,10 @@ class thorlabsFile():
             st = self.r.read(totalFramesSize*self.nChannels)
             
 
-
-            stack = cp.frombuffer(st,dtype = np.uint16).reshape((totalFrames*self.nChannels,self.height,self.width))
+            if channel ==1:
+                stack = cp.frombuffer(st,dtype = np.uint16).reshape((totalFrames*self.nChannels,self.height,self.width))
+            elif channel==2:
+                stack = cp.frombuffer(st,dtype = np.uint16).reshape(((totalFrames*self.nChannels-1),self.height,self.width))
             print(stack.shape)
             if self.nChannels==2:
                 stack = stack[::2,:,:]  #Take only channel 1
@@ -362,7 +364,7 @@ class thorlabsFile():
 
         self.currentLastFrame = self.array.shape[0]
 
-    def loadFromTiff(self,fullpath):
+    def loadFromTiff(self,fullpath,title = 'Image'):
         """
         Load image data from a TIFF file and update the associated parameters.
         Parameters
@@ -398,10 +400,10 @@ class thorlabsFile():
 
         if self.app is not None:
             try:
-                l = self.app.layers['Image']
+                l = self.app.layers[title]
                 l.data = self.array
             except:
-                self.app.add_image(self.array)
+                self.app.add_image(self.array,name=title)
         self.currentLastFrame = self.array.shape[0]
         self.folder = os.path.split(fullpath)[0]
         self.fullpath = os.path.join(fullpath)

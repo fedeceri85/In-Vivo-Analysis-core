@@ -241,6 +241,13 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
                 outfile = os.path.join(outFolder,'1-jumpCorrected.tif')
                 tifffile.imwrite(outfile, tb.app.layers['Image'].data)
                 valid1.value = True
+                
+                if el['nChannels']==2:
+                    valid1.value = False
+                    outfile2 = os.path.join(outFolder,'1-jumpCorrected-channel2.tif')
+                    tifffile.imwrite(outfile2, tb.app.layers['Image channel 2'].data)
+                    valid1.value = True
+
     b3.on_click(saveProcessed)
 
     def loadJumpCorr(b):
@@ -253,6 +260,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             
         #tb.loadQuickLook(outFolder)
         tb.loadFromTiff(outFolder)
+        if el['nChannels']==2:
+            outFolder2 = os.path.join(workingFolder,savefolder,'1-jumpCorrected-channel2.tif')
+            tb.loadFromTiff(outFolder2,title='Image channel 2')
+            
         #except:
             #print('Cannot open jump-corrected movie')
         try:
@@ -611,7 +622,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
                     s = s[::2,:]    
                 ttrace = s.mean(1)
         elif os.path.exists(os.path.join(workingFolder,'corrReference.csv')):
-                s = pd.read_csv(os.path.join(workingFolder,'corrReference.csv'),header=None)
+                s = pd.read_csv(os.path.join(workingFolder,'corrReference.csv'))
                 s = s['Mean'].values
                 s = s[firstFrame:lastFrame]
                 if smoothOrder!=1:
