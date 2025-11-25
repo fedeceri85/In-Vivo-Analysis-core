@@ -203,8 +203,8 @@ class thorlabsFile():
         self.temporalGaussianSigma = temporalGaussian
 
         self.array = np.empty((0,self.height,self.width),dtype=np.uint16)
-        self.nChannels = nChannels
-
+        self.nChannels = int(nChannels)
+    
         if self.nChannels==2:
             self.nFrames = self.nFrames//2
 
