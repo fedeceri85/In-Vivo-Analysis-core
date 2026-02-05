@@ -12,6 +12,7 @@ from scipy.signal import argrelmin,argrelmax
 import tifffile
 import plotly.graph_objs as go
 import mass_ts
+from pathlib import Path
 
 def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
     """
@@ -61,7 +62,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
     xwTemplateSlider =  widgets.IntSlider(min=0,max=1000,step=1,value=0,continuous_update=False,description='Template strength')
     lbl3 = widgets.Label('Template search',layout= widgets.Layout(display="flex", justify_content="center"))
     pbar = widgets.IntProgress(min=0,max=1,bar_style='success',description='Progress')
-    ddMenu =  widgets.Dropdown(options=['Z', 'C', 'D','E','F'], value='Z', description='Drive:', disabled=False)
+    ddMenu =  widgets.Dropdown(options=['Z', 'C', 'D','E','F','/media/marcotti-lab'], value='Z', description='Drive:', disabled=False)
     
 
     prevButton =  widgets.Button(description='<',button_style = 'primary')
@@ -114,8 +115,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
-        
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
       
 
         try:
@@ -155,12 +158,12 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         lblCurrent.value = 'Jump-corrected movie'
 
         try:
-            spatialGaussian = el['SpatialGaussian']
+            spatialGaussian = int(el['SpatialGaussian'])
         except:
             spatialGaussian = 2
 
         try:
-            temporalGaussian = el['TemporalGaussian']
+            temporalGaussian = int(el['TemporalGaussian'])
         except:
             temporalGaussian = 2
 
@@ -192,7 +195,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         try:
             firstFrame,lastFrame = el['first-last'].split('-')
             firstFrame = int(firstFrame)-1
@@ -229,7 +235,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         if lblCurrent.value == 'Jump-corrected movie':
             
                 outFolder = os.path.join(workingFolder,savefolder)
@@ -254,15 +263,18 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         #try:
         outFolder = os.path.join(workingFolder,savefolder,'1-jumpCorrected.tif')
             
         #tb.loadQuickLook(outFolder)
-        tb.loadFromTiff(outFolder)
+        tb.loadFromTiff(outFolder,nChannels=el['nChannels'],channel=1)
         if el['nChannels']==2:
             outFolder2 = os.path.join(workingFolder,savefolder,'1-jumpCorrected-channel2.tif')
-            tb.loadFromTiff(outFolder2,title='Image channel 2')
+            tb.loadFromTiff(outFolder2,title='Image channel 2',nChannels=el['nChannels'],channel=2)
             
         #except:
             #print('Cannot open jump-corrected movie')
@@ -288,7 +300,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         #try:
         outFolder = os.path.join(workingFolder,savefolder,'1-jumpCorrected.tif')
             
@@ -315,7 +330,10 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[xw.value]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         #try:
         outFolder = os.path.join(workingFolder,savefolder,'1-jumpCorrected-mc.tif')
             
@@ -552,11 +570,14 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         el = master.loc[x]
         workingFolder = el['Folder']
         if ddMenu.value !='Z':
-            workingFolder = ddMenu.value + workingFolder[1:]
+            if os.name == 'posix':
+                workingFolder = Path(ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = ddMenu.value + workingFolder[1:]
         
       
 
-        fig.layout.title.text = workingFolder
+        fig.layout.title.text = str(workingFolder)
         lblCurrent.value = 'None'
         #check wheteher it has been motion corrected
         outFolder = os.path.join(workingFolder,savefolder,'1-jumpCorrected.tif')
@@ -614,7 +635,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
 
         if os.path.exists(os.path.join(workingFolder,'corrReference.npy')):
                 r,s,t = tu.loadRoisFromFile(os.path.join(workingFolder,'corrReference.npy'))
-                s = s[firstFrame:lastFrame,:]
+                s = s[firstFrame*el['nChannels']:lastFrame*el['nChannels'],:]
                 if smoothOrder!=1:
                     for i in np.arange(s.shape[1]):
                         s[:,i] = savgol_filter(s[:,i],smoothOrder,1)
@@ -624,41 +645,42 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         elif os.path.exists(os.path.join(workingFolder,'corrReference.csv')):
                 s = pd.read_csv(os.path.join(workingFolder,'corrReference.csv'))
                 s = s['Mean'].values
-                s = s[firstFrame:lastFrame]
+                s = s[firstFrame*el['nChannels']:lastFrame*el['nChannels']]
                 if smoothOrder!=1:
                     s = savgol_filter(s,smoothOrder,1)
                 if el['nChannels']==2:
                     s = s[::2]
                 ttrace = s 
-                
-        elif  not pd.isna(el['rois']):
-            if os.path.exists(os.path.join(workingFolder,el['rois'])):
-                r,s,t = tu.loadRoisFromFile(os.path.join(workingFolder,el['rois']))
-                s = s[firstFrame:lastFrame,:]
-                for i in np.arange(s.shape[1]):
-                    s[:,i] = savgol_filter(s[:,i],11,1)
-                ttrace = s.mean(1)
         else:
-            try:
-                ttrace = correctionReferenceTraceDf[el['Folder']].values
-                ttrace = ttrace[~pd.isna(ttrace)]
-                ttrace = ttrace[firstFrame:lastFrame]
-            except:
-                print('no roi found')
-                prevImg = getPreviewImage(workingFolder)
-                height,width = prevImg.shape
+            raise ValueError('corrReference not found')       
+        # elif  not pd.isna(el['rois']):
+        #     if os.path.exists(os.path.join(workingFolder,el['rois'])):
+        #         r,s,t = tu.loadRoisFromFile(os.path.join(workingFolder,el['rois']))
+        #         s = s[firstFrame:lastFrame,:]
+        #         for i in np.arange(s.shape[1]):
+        #             s[:,i] = savgol_filter(s[:,i],11,1)
+        #         ttrace = s.mean(1)
+        # else:
+        #     try:
+        #         ttrace = correctionReferenceTraceDf[el['Folder']].values
+        #         ttrace = ttrace[~pd.isna(ttrace)]
+        #         ttrace = ttrace[firstFrame:lastFrame]
+        #     except:
+        #         print('no roi found')
+        #         prevImg = getPreviewImage(workingFolder)
+        #         height,width = prevImg.shape
 
-                movie = thorlabsFile(workingFolder,applyGaussian=False,showViewer=False)
-                movie.loadFrameInterval(firstFrame,lastFrame)
+        #         movie = thorlabsFile(workingFolder,applyGaussian=False,showViewer=False)
+        #         movie.loadFrameInterval(firstFrame,lastFrame)
 
-                s = movie.array.mean(2).mean(1)
-                s = np.expand_dims(s,1)
-                s = s[firstFrame:lastFrame,:]   
+        #         s = movie.array.mean(2).mean(1)
+        #         s = np.expand_dims(s,1)
+        #         s = s[firstFrame:lastFrame,:]   
 
-                for i in np.arange(s.shape[1]):
-                    s[:,i] = savgol_filter(s[:,i],11,1)
+        #         for i in np.arange(s.shape[1]):
+        #             s[:,i] = savgol_filter(s[:,i],11,1)
         
-                ttrace = s.mean(1)
+        #         ttrace = s.mean(1)
         correctionReferenceTraceDf[el['Folder']] = np.pad(ttrace,(0,60000-len(ttrace)),mode='constant',constant_values=np.nan)
         
         try:         

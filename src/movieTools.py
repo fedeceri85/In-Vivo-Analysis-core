@@ -282,7 +282,10 @@ class thorlabsFile():
                 if channel==1:
                     stack = cp.frombuffer(st,dtype = np.uint16).reshape((remainderFrames*self.nChannels,self.height,self.width))
                 elif channel==2:
-                    stack = cp.frombuffer(st,dtype = np.uint16).reshape(((remainderFrames*self.nChannels-1),self.height,self.width))
+                    try:
+                        stack = cp.frombuffer(st,dtype = np.uint16).reshape(((remainderFrames*self.nChannels-1),self.height,self.width))
+                    except ValueError:
+                        stack = cp.frombuffer(st,dtype = np.uint16).reshape((remainderFrames*self.nChannels,self.height,self.width))
 
                 if self.nChannels==2:
                     stack = stack[::2,:,:]  #Take only channel 1
@@ -364,7 +367,7 @@ class thorlabsFile():
 
         self.currentLastFrame = self.array.shape[0]
 
-    def loadFromTiff(self,fullpath,title = 'Image'):
+    def loadFromTiff(self,fullpath,title = 'Image',nChannels = 1, channel=1):
         """
         Load image data from a TIFF file and update the associated parameters.
         Parameters
@@ -397,13 +400,27 @@ class thorlabsFile():
         update or add the image to the application's layers.
         """
         self.array = tifffile.imread(fullpath)
-
+        self.nChannels = int(nChannels)
         if self.app is not None:
             try:
                 l = self.app.layers[title]
                 l.data = self.array
             except:
-                self.app.add_image(self.array,name=title)
+#                self.app.add_image(self.array,name=title)
+                if self.nChannels == 2:
+                    if channel == 1:
+                        colormap = 'green'
+                    else:
+                        colormap = 'red'
+                    self.app.add_image(self.array, name=title, colormap=colormap, blending='additive')
+                elif self.nChannels >2:
+                    raise NotImplementedError('nChannels >2 not implemented yet')
+                else:
+                    self.app.add_image(self.array, name=title)
+
+
+
+
         self.currentLastFrame = self.array.shape[0]
         self.folder = os.path.split(fullpath)[0]
         self.fullpath = os.path.join(fullpath)
