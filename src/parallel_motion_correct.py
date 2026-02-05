@@ -767,6 +767,121 @@ def apply_transforms(
     return corrected_stack
 
 
+def apply_transforms_to_file(
+    input_path: Union[str, Path],
+    output_path: Union[str, Path],
+    transforms: np.ndarray,
+    chunk_size: int = 500,
+    correct_intensity: bool = False,
+    intensity_offset: float = 0.0,
+    progress_bar: bool = False,
+    n_frames: Optional[int] = None
+) -> Path:
+    """
+    Apply pre-computed transformation matrices to a TIFF or RAW file.
+    
+    This function streams data in chunks and writes directly to a TIFF file,
+    enabling memory-efficient processing of arbitrarily large files.
+    
+    Args:
+        input_path: Path to input TIFF or RAW file
+        output_path: Path for output TIFF file
+        transforms: Pre-computed transformation matrices (n_frames, 3, 3).
+                    If length differs from input frames, will be interpolated.
+        chunk_size: Number of frames to process at a time (default 500)
+        correct_intensity: If True, apply intensity offset correction
+        intensity_offset: Offset value to subtract (only used if correct_intensity=True)
+        progress_bar: Show progress bar during processing
+        n_frames: Number of frames to process (None = all frames)
+    
+    Returns:
+        Path to the output file
+    
+    Example:
+        # After computing transforms on file A, apply them to file B:
+        >>> transforms = np.load('transforms.npy')
+        >>> apply_transforms_to_file(
+        ...     'channel_B.tif',
+        ...     'channel_B_corrected.tif',
+        ...     transforms
+        ... )
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Determine file type
+    is_raw = input_path.suffix.lower() == '.raw'
+    is_tiff = input_path.suffix.lower() in ('.tif', '.tiff')
+    
+    if not (is_raw or is_tiff):
+        raise ValueError(f"Unsupported file format: {input_path.suffix}")
+    
+    # Get file dimensions
+    if is_raw:
+        total_frames, height, width = get_raw_file_info(input_path)
+    else:
+        total_frames, height, width = get_tiff_file_info(input_path)
+    
+    # Limit frames if requested
+    if n_frames is not None:
+        total_frames = min(n_frames, total_frames)
+    
+    # Interpolate transforms if needed
+    if len(transforms) != total_frames:
+        logger.info(f"Interpolating transforms from {len(transforms)} to {total_frames} frames")
+        transforms = interpolate_transforms(transforms, total_frames)
+    
+    # Estimate if we need BigTIFF
+    output_size_estimate = total_frames * height * width * 2  # uint16
+    bigtiff = output_size_estimate > 2 * 1024**3
+    
+    # Create StackReg instance for transforms
+    sr = StackReg(StackReg.RIGID_BODY)
+    
+    logger.info(f"Applying transforms to {input_path.name}: {total_frames} frames @ {height}x{width}")
+    
+    # Stream processing with TiffWriter
+    with tifffile.TiffWriter(output_path, bigtiff=bigtiff) as tif:
+        n_chunks = (total_frames + chunk_size - 1) // chunk_size
+        
+        iterator = range(0, total_frames, chunk_size)
+        if progress_bar:
+            iterator = tqdm(iterator, total=n_chunks, desc="Applying transforms", unit="chunk")
+        
+        for start in iterator:
+            end = min(start + chunk_size, total_frames)
+            
+            # Load chunk from file (RAW or TIFF)
+            if is_raw:
+                chunk = load_raw_chunk(input_path, start, end, width, height)
+            else:  # TIFF
+                chunk = load_tiff_chunk(input_path, start, end)
+            
+            # Apply transforms to this chunk
+            chunk_transforms = transforms[start:end]
+            corrected_chunk = np.zeros_like(chunk, dtype=np.float64)
+            
+            for i, (frame, tmat) in enumerate(zip(chunk, chunk_transforms)):
+                corrected_chunk[i] = sr.transform(frame.astype(np.float64), tmat)
+            
+            # Apply intensity correction if needed
+            if correct_intensity and abs(intensity_offset) >= 1.0:
+                corrected_chunk = corrected_chunk - intensity_offset
+            
+            # Convert back to uint16
+            corrected_chunk = np.clip(corrected_chunk, 0, 65535).astype(np.uint16)
+            
+            # Write chunk to TIFF (appends automatically)
+            tif.write(corrected_chunk, contiguous=True)
+            
+            # Explicit memory release
+            del chunk, corrected_chunk
+    
+    logger.info(f"Saved corrected file: {output_path}")
+    return output_path
+
+
 def motion_correct_stack(
     stack: np.ndarray,
     transform_type: TransformType = 'rigid',
@@ -1024,7 +1139,9 @@ def process_single_file_chunked(
     save_binned: bool = False,
     chunk_size: int = 500,
     output_name: Optional[str] = None,
-    correct_intensity: bool = False
+    correct_intensity: bool = False,
+    additional_files: Optional[list[Union[str, Path]]] = None,
+    register_on_companion: bool = False
 ) -> ProcessingResult:
     """
     Memory-efficient chunked processing of a single file.
@@ -1052,6 +1169,13 @@ def process_single_file_chunked(
                      input filename stem + suffix. Example: 'my_output' -> 'my_output.tif'
         correct_intensity: If True, compute and apply a global intensity offset correction
                            to compensate for bicubic interpolation artifacts.
+        additional_files: Optional list of additional files (e.g., companion channels) to
+                          apply the same transforms to. Each file will be processed using
+                          the transforms computed from the primary input file.
+        register_on_companion: If True and additional_files is provided, compute transforms
+                               on the first companion file instead of the input file. The
+                               input file then becomes an "additional file" that gets the
+                               transforms applied to it.
     
     Returns:
         ProcessingResult with status and output path
@@ -1089,16 +1213,31 @@ def process_single_file_chunked(
         
         logger.info(f"Processing {input_path.name}: {original_frames} frames @ {height}x{width}")
         
+        # Handle register_on_companion: swap registration source with companion
+        registration_path = input_path
+        files_to_correct = [input_path]
+        if additional_files:
+            files_to_correct.extend([Path(f) for f in additional_files])
+        
+        if register_on_companion and additional_files:
+            # Use the first companion file for registration instead
+            registration_path = Path(additional_files[0])
+            logger.info(f"Computing transforms on companion file: {registration_path.name}")
+        
         # ============================================================
         # PHASE 1: Load binned frames and compute transforms
         # Memory: ~1.6 GB for 3000 binned frames at 512x512
         # ============================================================
         
+        # Determine registration source file type
+        reg_is_raw = registration_path.suffix.lower() == '.raw'
+        reg_is_tiff = registration_path.suffix.lower() in ('.tif', '.tiff')
+        
         if temporal_bin > 1:
-            logger.info(f"Phase 1: Loading binned frames ({temporal_bin}x binning)...")
-            if is_raw:
+            logger.info(f"Phase 1: Loading binned frames ({temporal_bin}x binning) from {registration_path.name}...")
+            if reg_is_raw:
                 stack_binned = load_binned_frames(
-                    input_path,
+                    registration_path,
                     bin_size=temporal_bin,
                     width=width,
                     height=height,
@@ -1107,7 +1246,7 @@ def process_single_file_chunked(
                 )
             else:  # TIFF
                 stack_binned = load_binned_frames_tiff(
-                    input_path,
+                    registration_path,
                     bin_size=temporal_bin,
                     total_frames=original_frames,
                     progress_bar=progress_bar
@@ -1116,10 +1255,10 @@ def process_single_file_chunked(
             # No binning requested - need to load all for registration
             # This path may still use significant memory for very large files
             logger.warning("No temporal binning - loading full stack for registration")
-            if is_raw:
-                stack_binned = load_raw_chunk(input_path, 0, original_frames, width, height)
+            if reg_is_raw:
+                stack_binned = load_raw_chunk(registration_path, 0, original_frames, width, height)
             else:  # TIFF
-                stack_binned = load_tiff_chunk(input_path, 0, original_frames)
+                stack_binned = load_tiff_chunk(registration_path, 0, original_frames)
         
         # Motion correct the binned stack
         logger.info(f"Phase 1: Computing transforms on {len(stack_binned)} binned frames...")
@@ -1166,49 +1305,17 @@ def process_single_file_chunked(
             
             logger.info(f"Phase 2: Applying transforms in chunks of {chunk_size} frames...")
             
-            # Estimate if we need BigTIFF
-            output_size_estimate = original_frames * height * width * 2  # uint16
-            bigtiff = output_size_estimate > 2 * 1024**3
-            
-            # Create StackReg instance for transforms
-            sr = StackReg(StackReg.RIGID_BODY)
-            
-            # Stream processing with TiffWriter
-            with tifffile.TiffWriter(output_path, bigtiff=bigtiff) as tif:
-                n_chunks = (original_frames + chunk_size - 1) // chunk_size
-                
-                iterator = range(0, original_frames, chunk_size)
-                if progress_bar:
-                    iterator = tqdm(iterator, total=n_chunks, desc="Applying transforms", unit="chunk")
-                
-                for start in iterator:
-                    end = min(start + chunk_size, original_frames)
-                    
-                    # Load chunk from file (RAW or TIFF)
-                    if is_raw:
-                        chunk = load_raw_chunk(input_path, start, end, width, height)
-                    else:  # TIFF
-                        chunk = load_tiff_chunk(input_path, start, end)
-                    
-                    # Apply transforms to this chunk
-                    chunk_transforms = transforms_full[start:end]
-                    corrected_chunk = np.zeros_like(chunk, dtype=np.float64)
-                    
-                    for i, (frame, tmat) in enumerate(zip(chunk, chunk_transforms)):
-                        corrected_chunk[i] = sr.transform(frame.astype(np.float64), tmat)
-                    
-                    # Apply intensity correction if needed
-                    if correct_intensity and abs(intensity_offset) >= 1.0:
-                        corrected_chunk = corrected_chunk - intensity_offset
-                    
-                    # Convert back to uint16
-                    corrected_chunk = np.clip(corrected_chunk, 0, 65535).astype(np.uint16)
-                    
-                    # Write chunk to TIFF (appends automatically)
-                    tif.write(corrected_chunk, contiguous=True)
-                    
-                    # Explicit memory release
-                    del chunk, corrected_chunk
+            # Use the standalone function to apply transforms
+            apply_transforms_to_file(
+                input_path=input_path,
+                output_path=output_path,
+                transforms=transforms_full,
+                chunk_size=chunk_size,
+                correct_intensity=correct_intensity,
+                intensity_offset=intensity_offset,
+                progress_bar=progress_bar,
+                n_frames=n_frames
+            )
             
             # Optionally save binned corrected stack
             if save_binned:
@@ -1269,6 +1376,39 @@ def process_single_file_chunked(
             f.write(f"Transform matrix shape: {transforms_binned.shape}\n")
             f.write(f"Processing time: {time.time() - start_time:.2f} seconds\n")
         
+        # ============================================================
+        # PHASE 3: Apply transforms to additional files (if any)
+        # ============================================================
+        
+        additional_outputs = []
+        if additional_files:
+            logger.info(f"Phase 3: Applying transforms to {len(additional_files)} additional file(s)...")
+            for add_file in additional_files:
+                add_file = Path(add_file)
+                if not add_file.exists():
+                    logger.warning(f"Additional file not found, skipping: {add_file}")
+                    continue
+                
+                # Generate output name for additional file
+                add_output_name = f"{add_file.stem}{suffix}"
+                add_output_path = local_output_dir / f"{add_output_name}.tif"
+                
+                try:
+                    apply_transforms_to_file(
+                        input_path=add_file,
+                        output_path=add_output_path,
+                        transforms=transforms_full,
+                        chunk_size=chunk_size,
+                        correct_intensity=correct_intensity,
+                        intensity_offset=intensity_offset,
+                        progress_bar=progress_bar,
+                        n_frames=n_frames
+                    )
+                    additional_outputs.append(add_output_path)
+                    logger.info(f"Successfully processed additional file: {add_file.name}")
+                except Exception as add_err:
+                    logger.error(f"Failed to process additional file {add_file}: {add_err}")
+        
         processing_time = time.time() - start_time
         
         return ProcessingResult(
@@ -1307,7 +1447,9 @@ def parallel_batch_process(
     chunk_size: int = 500,
     skip_existing: bool = False,
     output_name: Optional[str] = None,
-    correct_intensity: bool = False
+    correct_intensity: bool = False,
+    companion_suffix: Optional[str] = None,
+    register_on_companion: bool = False
 ) -> list[ProcessingResult]:
     """
     Process multiple files in parallel.
@@ -1341,6 +1483,15 @@ def parallel_batch_process(
                      unless files are in different directories.
         correct_intensity: If True, compute and apply a global intensity offset correction
                            to compensate for bicubic interpolation artifacts.
+        companion_suffix: Optional suffix to identify companion files that should be
+                          corrected using the same transforms. For example, if primary
+                          file is '1-jumpCorrected.tif' and companion_suffix='-channel2',
+                          the function will look for '1-jumpCorrected-channel2.tif' in
+                          the same directory and apply the computed transforms to it.
+        register_on_companion: If True (and companion_suffix is set), compute transforms
+                               on the companion file instead of the primary file. Both
+                               files still get corrected, but registration is based on
+                               the companion channel.
     
     Returns:
         List of ProcessingResult objects
@@ -1420,6 +1571,20 @@ def parallel_batch_process(
     logger.info(f"Processing {len(files_to_process)} files with {actual_n_jobs} parallel jobs")
     
     if use_chunked:
+        # Build list of additional files for each primary file if companion_suffix is set
+        def get_companion_files(primary_file: Path) -> Optional[list[Path]]:
+            if companion_suffix is None:
+                return None
+            # Construct companion filename: stem + companion_suffix + extension
+            companion_name = f"{primary_file.stem}{companion_suffix}{primary_file.suffix}"
+            companion_path = primary_file.parent / companion_name
+            if companion_path.exists():
+                logger.info(f"Found companion file: {companion_path.name}")
+                return [companion_path]
+            else:
+                logger.warning(f"Companion file not found: {companion_path}")
+                return None
+        
         results = Parallel(n_jobs=actual_n_jobs, verbose=verbose)(
             delayed(process_func)(
                 input_path=f,
@@ -1435,7 +1600,9 @@ def parallel_batch_process(
                 save_binned=save_binned,
                 chunk_size=chunk_size,
                 output_name=output_name,
-                correct_intensity=correct_intensity
+                correct_intensity=correct_intensity,
+                additional_files=get_companion_files(f),
+                register_on_companion=register_on_companion
             )
             for f in files_to_process
         )
