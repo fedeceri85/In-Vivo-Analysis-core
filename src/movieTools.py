@@ -38,6 +38,41 @@ savefolder = 'processedMovies'
 MAXCHUNKSIZE = 1024*288*2*6000 # MAX MEMORY ALLOWED IN GRAPHICS CARD. WARNING! IT IS PC DEPENDENT. Main server (16GB GPU) is 786432000
 
 
+def read_tiff_stack(filepath: str) -> np.ndarray:
+    """
+    Robustly read a TIFF stack as a 3D array (frames, height, width).
+    
+    Handles TIFFs that were written with chunked/contiguous writes which
+    causes tifffile to split pages into multiple series. Falls back to
+    reading all pages individually if series detection produces unexpected
+    dimensions.
+    
+    Args:
+        filepath: Path to TIFF file
+        
+    Returns:
+        numpy array with shape (n_frames, height, width)
+    """
+    with tifffile.TiffFile(filepath) as tif:
+        n_pages = len(tif.pages)
+        
+        # Check if simple read will work
+        if len(tif.series) == 1:
+            shape = tif.series[0].shape
+            # If it's 3D (either multi-page or single-page with 3D data), use fast path
+            if len(shape) == 3:
+                return tif.asarray()
+        
+        # Multiple series (e.g., from chunked writes) - read all pages individually
+        first_page = tif.pages[0].asarray()
+        stack = np.zeros((n_pages, *first_page.shape), dtype=first_page.dtype)
+        stack[0] = first_page
+        for i, page in enumerate(tif.pages[1:], 1):
+            stack[i] = page.asarray()
+        
+        return stack
+
+
 def getNImages(r,n,height, width, start = 0,):
 
     frameSize = width*height*2
@@ -399,7 +434,7 @@ class thorlabsFile():
         If the instance has an associated application (self.app), it will attempt to
         update or add the image to the application's layers.
         """
-        self.array = tifffile.imread(fullpath)
+        self.array = read_tiff_stack(fullpath)
         self.nChannels = int(nChannels)
         if self.app is not None:
             try:
@@ -424,7 +459,7 @@ class thorlabsFile():
         self.currentLastFrame = self.array.shape[0]
         self.folder = os.path.split(fullpath)[0]
         self.fullpath = os.path.join(fullpath)
-        self.nFrames, self.width,self.height, = self.array.shape
+        self.nFrames, self.height, self.width = self.array.shape
         self.frameSize = self.width*self.height*2
         
     def loadQuickLook(self,fullpath):

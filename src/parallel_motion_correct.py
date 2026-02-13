@@ -459,6 +459,7 @@ def load_tiff_chunk(
     Load a specific range of frames from a TIFF file efficiently.
     
     Uses zarr for efficient partial reading without loading the entire file.
+    Includes robust fallback to memmap if zarr fails or returns zeros (common on Windows).
     
     Args:
         filepath: Path to TIFF file
@@ -470,17 +471,42 @@ def load_tiff_chunk(
     """
     filepath = Path(filepath)
     
-    with tifffile.TiffFile(filepath) as tif:
-        # Use zarr for efficient partial reading
-        if len(tif.series) > 0:
-            series = tif.series[0]
-            if len(series.shape) >= 3:
-                store = tif.aszarr()
-                z = zarr.open(store, mode='r')
-                return np.array(z[start_frame:end_frame])
-        
-        # Fallback for multi-page TIFF
-        return tifffile.imread(filepath, key=range(start_frame, end_frame))
+    try:
+        with tifffile.TiffFile(filepath) as tif:
+            # Check if it's a 3D stack
+            if len(tif.series) > 0:
+                series = tif.series[0]
+                if len(series.shape) >= 3:
+                    try:
+                        # Primary method: use zarr
+                        store = tif.aszarr()
+                        z = zarr.open(store, mode='r')
+                        data = np.array(z[start_frame:end_frame])
+                        
+                        # Check for suspicious zeros (if expected data shouldn't be empty)
+                        if data.size > 0 and np.max(data) == 0:
+                            # Only warn if it's suspicious (e.g. valid specific types)
+                            # For now, treat all-zeros as potential failure of zarr mapping on Windows
+                            logger.warning(f"Zarr loader returned all zeros for {filepath.name} [{start_frame}:{end_frame}]. Trying fallback.")
+                            raise ValueError("Zarr returned all zeros")
+                            
+                        return data
+                    except Exception as e:
+                        logger.warning(f"Zarr loading failed/suspicious for {filepath.name}: {e}. Falling back to memmap.")
+                        # Fallback: use memmap
+                        # Note: memmap might keep file open, but it's more robust on Windows than zarr in some envs
+                        return tifffile.memmap(filepath)[start_frame:end_frame]
+            
+            # Fallback for multi-page TIFF or if series check failed
+            return tifffile.imread(filepath, key=range(start_frame, end_frame))
+            
+    except Exception as e:
+        logger.error(f"Failed to load chunk from {filepath} [{start_frame}:{end_frame}]: {e}")
+        # Last resort fallback: try reading full file memmapped and slicing
+        try:
+             return tifffile.memmap(filepath)[start_frame:end_frame]
+        except:
+             raise e
 
 
 def load_binned_frames_tiff(
@@ -775,7 +801,8 @@ def apply_transforms_to_file(
     correct_intensity: bool = False,
     intensity_offset: float = 0.0,
     progress_bar: bool = False,
-    n_frames: Optional[int] = None
+    n_frames: Optional[int] = None,
+    transform_type: TransformType = 'rigid'
 ) -> Path:
     """
     Apply pre-computed transformation matrices to a TIFF or RAW file.
@@ -837,7 +864,8 @@ def apply_transforms_to_file(
     bigtiff = output_size_estimate > 2 * 1024**3
     
     # Create StackReg instance for transforms
-    sr = StackReg(StackReg.RIGID_BODY)
+    # Create StackReg instance for transforms
+    sr = StackReg(TRANSFORM_TYPES[transform_type])
     
     logger.info(f"Applying transforms to {input_path.name}: {total_frames} frames @ {height}x{width}")
     
@@ -864,6 +892,10 @@ def apply_transforms_to_file(
             
             for i, (frame, tmat) in enumerate(zip(chunk, chunk_transforms)):
                 corrected_chunk[i] = sr.transform(frame.astype(np.float64), tmat)
+
+            # Debug check for zeros
+            if np.max(corrected_chunk) == 0:
+                 logger.warning(f"Chunk starting at {start} became all zeros after transform!")
             
             # Apply intensity correction if needed
             if correct_intensity and abs(intensity_offset) >= 1.0:
@@ -892,12 +924,34 @@ def motion_correct_stack(
     n_frames = stack.shape[0]
     sr = StackReg(TRANSFORM_TYPES[transform_type])
     
-    # Compute reference image
+    # Compute reference image centered around brightest frame
     if reference_frames is None or reference_frames <= 1:
-        reference = stack[0].astype(np.float64)
+        # Single reference frame: use the brightest frame
+        frame_means = np.mean(stack, axis=(1, 2))
+        brightest_idx = int(np.argmax(frame_means))
+        reference = stack[brightest_idx].astype(np.float64)
+        logger.info(f"Using brightest frame as reference: frame {brightest_idx} (mean intensity: {frame_means[brightest_idx]:.1f})")
     else:
+        # Multiple reference frames: center around brightest frame
         n_ref = min(reference_frames, n_frames)
-        reference = np.mean(stack[:n_ref], axis=0).astype(np.float64)
+        frame_means = np.mean(stack, axis=(1, 2))
+        brightest_idx = int(np.argmax(frame_means))
+        
+        # Compute indices centered around brightest frame
+        half = n_ref // 2
+        start_idx = brightest_idx - half
+        end_idx = start_idx + n_ref
+        
+        # Clamp to valid range
+        if start_idx < 0:
+            start_idx = 0
+            end_idx = n_ref
+        elif end_idx > n_frames:
+            end_idx = n_frames
+            start_idx = n_frames - n_ref
+        
+        reference = np.mean(stack[start_idx:end_idx], axis=0).astype(np.float64)
+        logger.info(f"Brightest frame: {brightest_idx} (mean intensity: {frame_means[brightest_idx]:.1f}). Using reference frames {start_idx}-{end_idx-1}")
     
     transformation_matrices = []
     original_dtype = stack.dtype
@@ -1314,7 +1368,8 @@ def process_single_file_chunked(
                 correct_intensity=correct_intensity,
                 intensity_offset=intensity_offset,
                 progress_bar=progress_bar,
-                n_frames=n_frames
+                n_frames=n_frames,
+                transform_type=transform_type
             )
             
             # Optionally save binned corrected stack
@@ -1402,7 +1457,8 @@ def process_single_file_chunked(
                         correct_intensity=correct_intensity,
                         intensity_offset=intensity_offset,
                         progress_bar=progress_bar,
-                        n_frames=n_frames
+                        n_frames=n_frames,
+                        transform_type=transform_type
                     )
                     additional_outputs.append(add_output_path)
                     logger.info(f"Successfully processed additional file: {add_file.name}")
@@ -1449,7 +1505,8 @@ def parallel_batch_process(
     output_name: Optional[str] = None,
     correct_intensity: bool = False,
     companion_suffix: Optional[str] = None,
-    register_on_companion: bool = False
+    register_on_companion: bool = False,
+    backend: str = 'loky'
 ) -> list[ProcessingResult]:
     """
     Process multiple files in parallel.
@@ -1490,8 +1547,11 @@ def parallel_batch_process(
                           the same directory and apply the computed transforms to it.
         register_on_companion: If True (and companion_suffix is set), compute transforms
                                on the companion file instead of the primary file. Both
-                               files still get corrected, but registration is based on
-                               the companion channel.
+                                files still get corrected, but registration is based on
+                                the companion channel.
+        backend: Joblib backend ('loky', 'threading', 'multiprocessing'). 
+                 'loky' is default but can fail on Windows in some envs. 
+                 Try 'threading' if having issues.
     
     Returns:
         List of ProcessingResult objects
@@ -1568,7 +1628,7 @@ def parallel_batch_process(
     if use_chunked:
         logger.info(f"Using memory-efficient chunked processing (chunk_size={chunk_size})")
     
-    logger.info(f"Processing {len(files_to_process)} files with {actual_n_jobs} parallel jobs")
+    logger.info(f"Processing {len(files_to_process)} files with {actual_n_jobs} parallel jobs (backend={backend})")
     
     if use_chunked:
         # Build list of additional files for each primary file if companion_suffix is set
@@ -1576,17 +1636,16 @@ def parallel_batch_process(
             if companion_suffix is None:
                 return None
             # Construct companion filename: stem + companion_suffix + extension
+            # Be careful not to double the suffix if it's already there (though less likely here)
             companion_name = f"{primary_file.stem}{companion_suffix}{primary_file.suffix}"
             companion_path = primary_file.parent / companion_name
             if companion_path.exists():
-                logger.info(f"Found companion file: {companion_path.name}")
                 return [companion_path]
-            else:
-                logger.warning(f"Companion file not found: {companion_path}")
-                return None
-        
-        results = Parallel(n_jobs=actual_n_jobs, verbose=verbose)(
-            delayed(process_func)(
+            return None
+
+        # Prepare arguments for chunked processing
+        tasks = [
+            delayed(process_single_file_chunked)(
                 input_path=f,
                 output_dir=output_dir,
                 transform_type=transform_type,
@@ -1595,7 +1654,7 @@ def parallel_batch_process(
                 n_frames=n_frames,
                 save_transforms=save_transforms,
                 suffix=suffix,
-                progress_bar=False,
+                progress_bar=(i == 0),  # Only show progress bar for first file to avoid clutter
                 apply_to_full=apply_to_full,
                 save_binned=save_binned,
                 chunk_size=chunk_size,
@@ -1604,11 +1663,12 @@ def parallel_batch_process(
                 additional_files=get_companion_files(f),
                 register_on_companion=register_on_companion
             )
-            for f in files_to_process
-        )
+            for i, f in enumerate(files_to_process)
+        ]
     else:
-        results = Parallel(n_jobs=actual_n_jobs, verbose=verbose)(
-            delayed(process_func)(
+        # Prepare arguments for standard processing
+        tasks = [
+            delayed(process_single_file)(
                 input_path=f,
                 output_dir=output_dir,
                 transform_type=transform_type,
@@ -1617,14 +1677,17 @@ def parallel_batch_process(
                 n_frames=n_frames,
                 save_transforms=save_transforms,
                 suffix=suffix,
-                progress_bar=False,
+                progress_bar=(i == 0),
                 apply_to_full=apply_to_full,
                 save_binned=save_binned,
                 output_name=output_name,
                 correct_intensity=correct_intensity
             )
-            for f in files_to_process
-        )
+            for i, f in enumerate(files_to_process)
+        ]
+    
+    # Run parallel jobs
+    results = Parallel(n_jobs=actual_n_jobs, verbose=verbose, backend=backend)(tasks)
     
     successful = sum(1 for r in results if r.success)
     failed = len(results) - successful
