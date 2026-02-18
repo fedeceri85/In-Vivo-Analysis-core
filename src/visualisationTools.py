@@ -93,6 +93,24 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         tooltip='Click me',
        )   
 
+    frameStartInt = widgets.BoundedIntText(value=0, min=0, max=10**6, step=1, description='Frame start:')
+    frameEndInt   = widgets.BoundedIntText(value=0, min=0, max=10**6, step=1, description='Frame end:')
+    buttonManualInterval = widgets.Button(
+        description='Delete interval',
+        disabled=False,
+        button_style='warning',
+        tooltip='Remove the frame interval defined by Frame start / Frame end',
+    )
+
+    firstFrameInt = widgets.BoundedIntText(value=1, min=1, max=10**6, step=1, description='First frame:')
+    lastFrameInt  = widgets.BoundedIntText(value=1, min=1, max=10**6, step=1, description='Last frame:')
+    buttonSetFirstLast = widgets.Button(
+        description='Set first-last',
+        disabled=False,
+        button_style='info',
+        tooltip='Write first-last to master and refresh the plot',
+    )
+
     def process_original_cbk(b):
         """
         Callback function to process and load original movie frames with jump corrections.
@@ -454,9 +472,11 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
 
 
     tb.app.dims.events.connect(update_slider)
-    sliderStack = widgets.VBox([xw,smoothOrderInt,valid1,valid2,valid3,valid4,valid5])
+    sliderStack = widgets.VBox([xw,smoothOrderInt,valid1,valid2,valid3,valid4,valid5,
+                                 widgets.HBox([firstFrameInt, lastFrameInt, buttonSetFirstLast])])
     buttonStack = widgets.VBox([lblCurrent,b,b2,b4,b4bis,b5,b3])
-    buttonStack2 = widgets.VBox([button,lbl3,buttonTemplate,xwTemplateSlider])
+    buttonStack2 = widgets.VBox([button,lbl3,buttonTemplate,xwTemplateSlider,
+                                  widgets.HBox([frameStartInt, frameEndInt,buttonManualInterval])])
     buttonStack3 = widgets.HBox([prevButton, nextButton])
     ui = widgets.VBox([widgets.HBox([sliderStack, widgets.VBox([lbl1,xwMinimaOrder,xwLeft,xwRight]),
                                      widgets.VBox([lbl2,xwMaximaOrder,xwMaxLeft,xwMaxRight]), buttonStack2,buttonStack,output,
@@ -501,6 +521,24 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
         fig.data[3]['y'] = []
         f(xw.value,xwLeft.value,xwRight.value,xwMinimaOrder.value,xwMaxLeft.value,xwMaxRight.value,xwMaximaOrder.value)
       #  print('Deleted')
+
+    def on_manual_interval_clicked(b):
+        intervals = master.at[xw.value, 'ExtraCorrectionIntervals']
+        if intervals.__class__ != list:
+            intervals = []
+        interval = [frameStartInt.value, frameEndInt.value]
+        intervals.append(interval)
+        master.at[xw.value, 'ExtraCorrectionIntervals'] = intervals
+        f(xw.value, xwLeft.value, xwRight.value, xwMinimaOrder.value, xwMaxLeft.value, xwMaxRight.value, xwMaximaOrder.value)
+
+    buttonManualInterval.on_click(on_manual_interval_clicked)
+
+    def on_set_first_last_clicked(b):
+        master.at[xw.value, 'first-last'] = f'{firstFrameInt.value}-{lastFrameInt.value}'
+        f(xw.value, xwLeft.value, xwRight.value, xwMinimaOrder.value,
+          xwMaxLeft.value, xwMaxRight.value, xwMaximaOrder.value)
+
+    buttonSetFirstLast.on_click(on_set_first_last_clicked)
 
     def on_template_clicked(b):
         global distance_profile
@@ -622,6 +660,11 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             lastFrame = int(lastFrame)
         except:
             firstFrame,lastFrame = [0,-1]
+
+        # Sync first/last frame widgets (1-based display)
+        firstFrameInt.value = firstFrame + 1
+        if lastFrame > 0:
+            lastFrameInt.value = lastFrame
 
         try:
             smoothOrder = el['SmoothOrder']
