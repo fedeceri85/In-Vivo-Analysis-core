@@ -266,7 +266,10 @@ class thorlabsFile():
             if channel ==1:
                 stack = cp.frombuffer(st,dtype = np.uint16).reshape((totalFrames*self.nChannels,self.height,self.width))
             elif channel==2:
-                stack = cp.frombuffer(st,dtype = np.uint16).reshape(((totalFrames*self.nChannels-1),self.height,self.width))
+                try:
+                    stack = cp.frombuffer(st,dtype = np.uint16).reshape(((totalFrames*self.nChannels-1),self.height,self.width))
+                except ValueError:
+                    stack = cp.frombuffer(st,dtype = np.uint16).reshape(((totalFrames*self.nChannels),self.height,self.width))
             print(stack.shape)
             if self.nChannels==2:
                 stack = stack[::2,:,:]  #Take only channel 1

@@ -1,4 +1,5 @@
 import ipywidgets as widgets
+import panel as pn
 from ipywidgets import interact, Dropdown
 import pylab as plt
 import numpy as np
@@ -13,6 +14,11 @@ import tifffile
 import plotly.graph_objs as go
 import mass_ts
 from pathlib import Path
+import traceback
+from bokeh.plotting import figure as bk_figure
+from bokeh.models import (ColumnDataSource, BoxAnnotation, CustomJS,
+                           BoxSelectTool)
+from bokeh.events import SelectionGeometry
 
 def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
     """
@@ -847,6 +853,654 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
                                         'minima_order':xwMinimaOrder, 'windowMax_size_left':xwMaxLeft, 'windowMax_size_right':xwMaxRight,'maxima_order':xwMaximaOrder,'drive':ddMenu})
 
     display(ui, out)
+
+
+class JumpFramesFinderPanel:
+    """
+    Class-based implementation of the jumpFramesFinderPanel tool.
+    Encapsulates state and UI logic for jump correction visualization.
+    """
+    def __init__(self, master, allminima, allmaxima, tb, corrFilename=None, jumpFrameFilename=None, jumpFrameMaxFilename=None):
+        self.master = master
+        self.allminima = allminima
+        self.allmaxima = allmaxima
+        self.tb = tb
+        self.corrFilename = corrFilename
+        self.jumpFrameFilename = jumpFrameFilename
+        self.jumpFrameMaxFilename = jumpFrameMaxFilename
+        self.identifiers = master['Folder'].unique()
+        self._ntraces = max(0, np.size(self.identifiers) - 1)
+        
+        # Internal state for template matching
+        self._distance_profile = [None]
+        self._template = [None]
+        
+        # Napari cursor counter
+        self._panel_counter = 0
+
+        self._init_widgets()
+        self._init_plot()
+        self._init_layout()
+        self._init_callbacks()
+
+        # Initial plot
+        self.update_plot(0)
+
+    def _init_widgets(self):
+        # Spinners (IntInput) for compact layout
+        self.xw             = pn.widgets.IntInput(name='Trace #',      value=0,  start=0, end=self._ntraces, step=1)
+        self.smoothOrderInt = pn.widgets.IntInput(name='Smooth. ord.', value=11, start=1, end=31,       step=2)
+
+        self.xwLeft         = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=50,  step=1)
+        self.xwRight        = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=50,  step=1)
+        self.xwMinimaOrder  = pn.widgets.IntInput(name='Order',     value=50, start=0, end=400, step=1)
+
+        self.xwMaxLeft      = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=50,  step=1)
+        self.xwMaxRight     = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=50,  step=1)
+        self.xwMaximaOrder  = pn.widgets.IntInput(name='Order',     value=50, start=0, end=400, step=1)
+
+        self.xwUpdateRate     = pn.widgets.IntInput(name='Update interval',   value=4,  start=1,  end=15,   step=1)
+        self.xwTemplateSlider = pn.widgets.IntInput(name='Template strength', value=0,  start=0,  end=1000, step=1)
+
+        self.ddMenu = pn.widgets.Select(name='Drive', options=['Z', 'C', 'D', 'E', 'F', '/media/marcotti-lab'], value='Z')
+
+        self.prevButton  = pn.widgets.Button(name='<',    button_type='primary', width=50)
+        self.nextButton  = pn.widgets.Button(name='>',    button_type='primary', width=50)
+        
+        self.bJumpCorr   = pn.widgets.Button(name='Jump corr original', button_type='primary')
+        self.bLoadOrig   = pn.widgets.Button(name='Load original')
+        self.bLoadJump   = pn.widgets.Button(name='Load jump-corrected')
+        self.bQuickJump  = pn.widgets.Button(name='Quick load jump-corrected')
+        self.bLoadMC     = pn.widgets.Button(name='Load motion-corrected')
+        self.bSave       = pn.widgets.Button(name='Save File', button_type='success')
+        self.buttonSaveAnalysis = pn.widgets.Button(name='Save Parameters (CSVs)', button_type='success')
+
+        self.lblCurrent  = pn.pane.Str('None')
+
+        self.valid1 = pn.indicators.BooleanStatus(value=False, color='success', width=20, height=20, name='Jump corr')
+        self.valid2 = pn.indicators.BooleanStatus(value=False, color='success', width=20, height=20, name='Motion corr')
+        self.valid3 = pn.indicators.BooleanStatus(value=False, color='success', width=20, height=20, name='Rois')
+        self.valid4 = pn.indicators.BooleanStatus(value=False, color='success', width=20, height=20, name='Traces')
+        self.valid5 = pn.indicators.BooleanStatus(value=False, color='success', width=20, height=20, name='Annotations')
+
+        self.pbar = pn.indicators.Progress(name='Progress', value=0, max=100, bar_color='success', width=200)
+
+        self.buttonDeleteSel  = pn.widgets.Button(name='Delete selected frames', button_type='warning')
+        self.buttonUndo       = pn.widgets.Button(name='Undo last delete',       button_type='warning')
+        self.buttonTemplate   = pn.widgets.Button(name='Create template',        button_type='primary')
+
+        self.frameStartInt = pn.widgets.IntInput(name='Frame start:', value=0, start=0)
+        self.frameEndInt   = pn.widgets.IntInput(name='Frame end:',   value=0, start=0)
+        self.buttonManualInterval = pn.widgets.Button(name='Delete interval', button_type='warning')
+
+        self.firstFrameInt     = pn.widgets.IntInput(name='First frame:', value=1, start=1)
+        self.lastFrameInt      = pn.widgets.IntInput(name='Last frame:',  value=1, start=1)
+        self.buttonSetFirstLast = pn.widgets.Button(name='Set first-last', button_type='primary')
+
+    def _init_plot(self):
+        self.src_orig   = ColumnDataSource(data=dict(x=[], y=[]))
+        self.src_corr   = ColumnDataSource(data=dict(x=[], y=[]))
+        self.src_min    = ColumnDataSource(data=dict(x=[], y=[]))
+        self.src_sel    = ColumnDataSource(data=dict(x=[], y=[]))
+        self.src_max    = ColumnDataSource(data=dict(x=[], y=[]))
+        self.cursor_src = ColumnDataSource(data=dict(x=[0, 0], y=[-1e9, 1e9]))
+        
+        # Stores the selected x-range so Python can read it at button-click time
+        self.sel_range_src = ColumnDataSource(data=dict(x0=[None], x1=[None]))
+
+        self.fig = bk_figure(height=380, sizing_mode='stretch_width',
+                             tools='box_zoom,xbox_select,pan,wheel_zoom,reset,save',
+                             active_drag='box_zoom')
+        self.fig.title.text = ''
+
+        self.fig.line('x', 'y', source=self.src_orig, color='steelblue', line_width=1)
+        self.fig.line('x', 'y', source=self.src_corr, color='orange',    line_width=1.5)
+        self.fig.scatter('x', 'y', source=self.src_min, color='teal', size=10, marker='x')
+        self.fig.scatter('x', 'y', source=self.src_sel, color='black', size=10, marker='x')
+        self.fig.scatter('x', 'y', source=self.src_max, color='red',  size=10, marker='x')
+        self.fig.line('x', 'y', source=self.cursor_src, color='black', line_width=2, line_dash='dashed')
+
+        # Dark red shaded box for the selected interval
+        self.sel_box = BoxAnnotation(left=0, right=0,
+                                     fill_alpha=0.35, fill_color='darkred',
+                                     line_color='darkred', line_alpha=0.8, line_width=1.5)
+        self.fig.add_layout(self.sel_box)
+
+        # CustomJS on SelectionGeometry
+        sel_js = CustomJS(args=dict(box=self.sel_box, rng=self.sel_range_src), code="""
+            const x0 = cb_obj.geometry.x0;
+            const x1 = cb_obj.geometry.x1;
+            box.left  = x0;
+            box.right = x1;
+            rng.data = {x0: [x0], x1: [x1]};
+        """)
+        self.fig.js_on_event(SelectionGeometry, sel_js)
+
+    def _init_layout(self):
+        # Widget sizing
+        _IW  = 90    # spinner width
+        _BW  = 170   # button width
+        _COL = 200   # column width
+
+        for w in (self.xw, self.smoothOrderInt, self.xwLeft, self.xwRight, self.xwMinimaOrder,
+                  self.xwMaxLeft, self.xwMaxRight, self.xwMaximaOrder, self.xwUpdateRate,
+                  self.xwTemplateSlider, self.firstFrameInt, self.lastFrameInt, 
+                  self.frameStartInt, self.frameEndInt):
+            w.width = _IW
+
+        for w in (self.bJumpCorr, self.bLoadOrig, self.bLoadJump, self.bQuickJump, 
+                  self.bLoadMC, self.bSave, self.buttonSaveAnalysis, self.buttonDeleteSel, self.buttonUndo, 
+                  self.buttonSetFirstLast, self.buttonManualInterval):
+            w.width = _BW
+        
+        self.ddMenu.width = 150
+
+        # Compact status row
+        status_row = pn.Row(
+            pn.pane.Str('JC:', width=22), self.valid1,
+            pn.pane.Str('MC:', width=22), self.valid2,
+            pn.pane.Str('R:',  width=16), self.valid3,
+            pn.pane.Str('T:',  width=16), self.valid4,
+            pn.pane.Str('A:',  width=16), self.valid5,
+            margin=(2, 0),
+        )
+
+        # Layout columns
+        slider_col = pn.Column(
+            self.xw, self.smoothOrderInt,
+            pn.Row(self.firstFrameInt, self.lastFrameInt),
+            self.buttonSetFirstLast,
+            width=_COL,
+        )
+        minima_col = pn.Column(
+            pn.pane.Str('─ Minima ─', margin=(4, 0)),
+            self.xwMinimaOrder, self.xwLeft, self.xwRight,
+            width=_COL,
+        )
+        maxima_col = pn.Column(
+            pn.pane.Str('─ Maxima ─', margin=(4, 0)),
+            self.xwMaximaOrder, self.xwMaxLeft, self.xwMaxRight,
+            width=_COL,
+        )
+        load_col = pn.Column(
+            self.lblCurrent,
+            self.bJumpCorr, self.bLoadOrig, self.bLoadJump, self.bQuickJump, 
+            self.bLoadMC,
+            width=_BW + 10,
+        )
+        save_col = pn.Column(
+            pn.pane.Str('─ Save ─', margin=(4, 0)),
+            self.bSave,
+            self.buttonSaveAnalysis,
+            width=_BW + 10,
+        )
+        edit_col = pn.Column(
+            pn.pane.Str('─ Edit ─', margin=(4, 0)),
+            self.buttonDeleteSel,
+            self.buttonUndo,
+            width=_BW + 10,
+        )
+        nav_col = pn.Column(
+            self.xwUpdateRate,
+            pn.Row(self.prevButton, self.nextButton, margin=(2, 0)),
+            self.pbar,
+            self.ddMenu,
+            width=_COL,
+        )
+
+        controls = pn.FlexBox(
+            slider_col, minima_col, maxima_col, edit_col, load_col, save_col, nav_col,
+            flex_wrap='wrap', align_content='flex-start',
+            styles={'gap': '12px'},
+        )
+        
+        # Add status_row to the bottom
+        self.layout = pn.Column(controls, pn.pane.Bokeh(self.fig, sizing_mode='stretch_width'), status_row)
+
+    def _init_callbacks(self):
+        # Watchers - using value_throttled for spinners
+        self.xwLeft.param.watch(self._on_minima_params, 'value_throttled')
+        self.xwRight.param.watch(self._on_minima_params, 'value_throttled')
+        self.xwMinimaOrder.param.watch(self._on_minima_params, 'value_throttled')
+        self.xwMaxLeft.param.watch(self._on_maxima_params, 'value_throttled')
+        self.xwMaxRight.param.watch(self._on_maxima_params, 'value_throttled')
+        self.xwMaximaOrder.param.watch(self._on_maxima_params, 'value_throttled')
+        self.smoothOrderInt.param.watch(self._on_smooth, 'value_throttled')
+        self.xw.param.watch(self._on_trace, 'value_throttled')
+        self.xwTemplateSlider.param.watch(self._on_template_slider, 'value_throttled')
+        self.ddMenu.param.watch(self._on_drive, 'value')
+
+        # Button clicks
+        self.bJumpCorr.on_click(self._process_original)
+        self.bLoadOrig.on_click(self._load_original)
+        self.bSave.on_click(self._save_processed)
+        self.buttonSaveAnalysis.on_click(self._save_analysis)
+        self.bLoadJump.on_click(self._load_jump_corr)
+        self.bQuickJump.on_click(self._quick_load_jump_corr)
+        self.bLoadMC.on_click(self._load_motion_corr)
+        self.prevButton.on_click(self._on_prev)
+        self.nextButton.on_click(self._on_next)
+        self.buttonDeleteSel.on_click(self._delete_selected)
+        self.buttonUndo.on_click(self._undo_last_interval)
+        self.buttonManualInterval.on_click(self._delete_manual_interval)
+        self.buttonSetFirstLast.on_click(self._set_first_last)
+        self.buttonTemplate.on_click(self._create_template)
+
+        # Napari cursor connection
+        try:
+             self.tb.app.dims.events.connect(self._update_cursor)
+        except:
+             pass
+
+    def show(self):
+        return self.layout.servable()
+
+    # --- Helper methods ---
+    def _resolve_folder(self, el):
+        workingFolder = el['Folder']
+        if self.ddMenu.value != 'Z':
+            if os.name == 'posix':
+                workingFolder = Path(self.ddMenu.value) / Path(workingFolder[2:].replace('\\', '/').lstrip('/'))
+            else:
+                workingFolder = self.ddMenu.value + workingFolder[1:]
+        return workingFolder
+
+    def _parse_first_last(self, el, workingFolder):
+        try:
+            firstFrame, lastFrame = el['first-last'].split('-')
+            firstFrame = int(firstFrame) - 1
+            lastFrame  = int(lastFrame)
+        except:
+            tr = getImgInfo(workingFolder)
+            if tr:
+                firstFrame, lastFrame = 0, tr[2]
+            else:
+                firstFrame, lastFrame = 0, 1000 # Fallback
+            if el.get('nChannels', 1) == 2:
+                lastFrame = lastFrame // 2
+        return firstFrame, lastFrame
+
+    def _remove_layers(self, *names):
+        for name in names:
+            try:
+                self.tb.app.layers.remove(name)
+            except Exception:
+                pass
+
+    def _clear_selection(self):
+        self.sel_range_src.data = dict(x0=[None], x1=[None])
+        self.sel_box.left  = 0
+        self.sel_box.right = 0
+
+    # --- Callbacks ---
+    def update_plot(self, x=None):
+        try:
+            self._update_plot_inner(x)
+        except Exception as e:
+            print(f'[JumpFramesFinderPanel] Error: {e}')
+            traceback.print_exc()
+
+    def _update_plot_inner(self, x=None):
+        if x is None:
+            x = self.xw.value
+        
+        # Ensure x is int
+        x = int(x)
+        if x not in self.master.index:
+            return
+
+        el = self.master.loc[x]
+        workingFolder = self._resolve_folder(el)
+
+        self.fig.title.text = str(workingFolder)
+        self.lblCurrent.object = 'None'
+
+        # Update status indicators
+        self.valid1.value = os.path.exists(os.path.join(workingFolder, savefolder, '1-jumpCorrected.tif'))
+        self.valid2.value = os.path.exists(os.path.join(workingFolder, savefolder, '1-jumpCorrected-mc.tif'))
+        self.valid3.value = os.path.exists(os.path.join(workingFolder, savefolder, 'Masks.tif'))
+        self.valid4.value = os.path.exists(os.path.join(workingFolder, savefolder, 'traces.csv'))
+        self.valid5.value = os.path.exists(os.path.join(workingFolder, savefolder, 'Annotations.tif'))
+
+        # Reset selection
+        self.src_sel.data = dict(x=[], y=[])
+        self._clear_selection()
+
+        # Parse first/last
+        try:
+            firstFrame, lastFrame = str(el['first-last']).split('-')
+            firstFrame = int(firstFrame) - 1
+            lastFrame  = int(lastFrame)
+        except:
+            firstFrame, lastFrame = 0, -1
+
+        # Sync first/last frame widgets
+        self.firstFrameInt.value = firstFrame + 1
+        if lastFrame > 0:
+            self.lastFrameInt.value = lastFrame
+
+        # Smooth order
+        try:
+            smoothOrder = el['SmoothOrder']
+            if (smoothOrder % 2) == 0:
+                smoothOrder += 1
+                self.master.loc[x, 'SmoothOrder'] = smoothOrder
+        except:
+            smoothOrder = 11
+        self.smoothOrderInt.value = int(smoothOrder)
+
+        # Load trace
+        ttrace = np.array([])
+        if os.path.exists(os.path.join(workingFolder, 'corrReference.npy')):
+            r, s, t = tu.loadRoisFromFile(os.path.join(workingFolder, 'corrReference.npy'))
+            s = s[firstFrame * el['nChannels']:lastFrame * el['nChannels'], :]
+            if smoothOrder != 1:
+                for i in np.arange(s.shape[1]):
+                    s[:, i] = savgol_filter(s[:, i], smoothOrder, 1)
+            if el['nChannels'] == 2:
+                s = s[::2, :]
+            ttrace = s.mean(1)
+        elif os.path.exists(os.path.join(workingFolder, 'corrReference.csv')):
+            s = pd.read_csv(os.path.join(workingFolder, 'corrReference.csv'))
+            s = s['Mean'].values
+            s = s[firstFrame * el['nChannels']:lastFrame * el['nChannels']]
+            if smoothOrder != 1:
+                s = savgol_filter(s, smoothOrder, 1)
+            if el['nChannels'] == 2:
+                s = s[::2]
+            ttrace = s
+
+        # Sync slider values from master
+        try:
+            if not np.isnan(el['Minima order']):
+                self.xwLeft.value        = int(el['Window left'])
+                self.xwRight.value       = int(el['Window right'])
+                self.xwMinimaOrder.value = int(el['Minima order'])
+        except: pass
+        
+        try:
+            if not np.isnan(el['Maxima order']):
+                self.xwMaxLeft.value      = int(el['Window Max left'])
+                self.xwMaxRight.value     = int(el['Window Max right'])
+                self.xwMaximaOrder.value  = int(el['Maxima order'])
+        except: pass
+
+        window_size_left  = self.xwLeft.value
+        window_size_right = self.xwRight.value
+        minima_order      = self.xwMinimaOrder.value
+        windowMax_size_left  = self.xwMaxLeft.value
+        windowMax_size_right = self.xwMaxRight.value
+        maxima_order         = self.xwMaximaOrder.value
+
+        minima = argrelmin(ttrace, order=minima_order)[0]
+        maxima = argrelmax(ttrace, order=maxima_order)[0]
+
+        if len(minima) and window_size_left > minima[0]:
+            minima = minima[1:]
+        if (self.xwLeft.value == 0) and (self.xwRight.value == 0):
+            minima = []
+        try:
+            self.allminima[el['Folder']] = np.pad(minima, (0, 1000 - len(minima)), 'constant')
+        except:
+            print('Cannot save minima')
+
+        ttrace2 = np.zeros(ttrace.shape) - 10000
+        left = 0
+        for elmin in minima:
+            ttrace2[left:elmin - window_size_left] = ttrace[left:elmin - window_size_left]
+            left = elmin + window_size_right
+        ttrace2[left:] = ttrace[left:]
+
+        if len(maxima) and windowMax_size_left > maxima[0]:
+            maxima = maxima[1:]
+        if (self.xwMaxLeft.value == 0) and (self.xwMaxRight.value == 0):
+            maxima = []
+        self.allmaxima[el['Folder']] = np.pad(maxima, (0, 1000 - len(maxima)), 'constant')
+
+        for elmin in maxima:
+            ttrace2[elmin - windowMax_size_left:elmin + windowMax_size_right] = -10000
+
+        try:
+            for interval in el['ExtraCorrectionIntervals']:
+                ttrace2[interval[0]:interval[1]] = -10000
+        except (TypeError, KeyError):
+            pass
+        try:
+            for interval in el['TemplateIntervals']:
+                ttrace2[interval[0]:interval[1]] = -10000
+        except (TypeError, KeyError):
+            pass
+
+        ttrace2[ttrace2 == -10000] = np.nan
+
+        self.src_orig.data = dict(x=list(np.arange(ttrace.shape[0])),  y=list(ttrace))
+        self.src_corr.data = dict(x=list(np.arange(ttrace2.shape[0])), y=list(ttrace2))
+        self.src_min.data  = dict(x=list(minima), y=list(ttrace[minima] if len(minima) else []))
+        self.src_max.data  = dict(x=list(maxima), y=list(ttrace[maxima] if len(maxima) else []))
+
+        # Update cursor range
+        try:
+            ymin = float(np.nanmin(ttrace)) * 0.9
+            ymax = float(np.nanmax(ttrace)) * 1.1
+            self.cursor_src.data = dict(x=self.cursor_src.data['x'], y=[ymin, ymax])
+        except: pass
+
+    def _update_cursor(self, event):
+        self._panel_counter += 1
+        if self._panel_counter % self.xwUpdateRate.value == 0:
+            try:
+                frame = self.tb.app.dims.current_step[0]
+                self.cursor_src.data = dict(x=[frame, frame], y=self.cursor_src.data['y'])
+            except: pass
+            self._panel_counter = 0
+
+    def _on_minima_params(self, event):
+        self.master.loc[self.xw.value, 'Window left']   = self.xwLeft.value
+        self.master.loc[self.xw.value, 'Window right']  = self.xwRight.value
+        self.master.loc[self.xw.value, 'Minima order']  = self.xwMinimaOrder.value
+        self.update_plot()
+
+    def _on_maxima_params(self, event):
+        self.master.loc[self.xw.value, 'Window Max left']  = self.xwMaxLeft.value
+        self.master.loc[self.xw.value, 'Window Max right'] = self.xwMaxRight.value
+        self.master.loc[self.xw.value, 'Maxima order']     = self.xwMaximaOrder.value
+        self.update_plot()
+
+    def _on_smooth(self, event):
+        self.master.loc[self.xw.value, 'SmoothOrder'] = self.smoothOrderInt.value
+        self.update_plot()
+
+    def _on_trace(self, event):
+        self.update_plot(self.xw.value)
+
+    def _on_drive(self, event):
+        self.update_plot()
+
+    def _on_template_slider(self, event):
+        if self._distance_profile[0] is None:
+            return
+        dp = self._distance_profile[0].copy()
+        tmpl = self._template[0]
+        if tmpl is None: return
+        
+        idcs = np.argsort(dp)
+        intervals = []
+        i = 0
+        while i <= self.xwTemplateSlider.value:
+            intervals.append([idcs[0], idcs[0] + tmpl.size])
+            dp[idcs[0]:idcs[0] + tmpl.size] = dp.max()
+            idcs = np.argsort(dp)
+            i += 1
+        self.master.at[self.xw.value, 'TemplateIntervals'] = intervals
+        self.update_plot()
+
+    def _process_original(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        firstFrame, lastFrame = self._parse_first_last(el, workingFolder)
+        thisMinima = self.allminima[el['Folder']]; thisMinima = thisMinima[thisMinima != 0]
+        thisMaxima = self.allmaxima[el['Folder']]; thisMaxima = thisMaxima[thisMaxima != 0]
+        nChannels = el.get('nChannels', 1)
+        frameIntervalsToRemove = calculateFrameIntervalsToRemove(
+            jumpFrames=thisMinima, winLeft=el['Window left'], winRight=el['Window right'],
+            jumpFramesMax=thisMaxima, winMaxLeft=el['Window Max left'], winMaxRight=el['Window Max right']
+        )
+        try: frameIntervalsToRemove.extend(el['ExtraCorrectionIntervals'])
+        except TypeError: pass
+        try: frameIntervalsToRemove.extend(el['TemplateIntervals'])
+        except TypeError: pass
+        
+        self.lblCurrent.object = 'Jump-corrected movie'
+        spatialGaussian  = int(el.get('SpatialGaussian',  2))
+        temporalGaussian = int(el.get('TemporalGaussian', 2))
+        
+        self.tb.loadFile(workingFolder, applyGaussian=True, nChannels=nChannels,
+                         spatialGaussian=spatialGaussian, temporalGaussian=temporalGaussian)
+        self.pbar.max   = self.tb.nFrames
+        self.pbar.value = 0
+        self.tb.loadFrameInterval(firstFrame, lastFrame, frameIntervalsToRemove=frameIntervalsToRemove)
+        self._remove_layers('Masks', 'Avg', 'Annotations')
+        if nChannels == 2:
+            self.tb.loadFile(workingFolder, applyGaussian=True, nChannels=nChannels,
+                             spatialGaussian=spatialGaussian, temporalGaussian=temporalGaussian)
+            self.tb.loadFrameInterval(firstFrame, lastFrame, frameIntervalsToRemove=frameIntervalsToRemove,
+                                      layerName='Image channel 2', channel=2)
+
+    def _load_original(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        firstFrame, lastFrame = self._parse_first_last(el, workingFolder)
+        nChannels = el.get('nChannels', 1)
+        self.tb.loadFile(workingFolder, applyGaussian=True, nChannels=nChannels)
+        self.pbar.max = self.tb.nFrames; self.pbar.value = 0
+        self.tb.loadFrameInterval(firstFrame, lastFrame, frameIntervalsToRemove=None)
+        self._remove_layers('Masks', 'Avg', 'Annotations')
+
+    def _save_processed(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        if self.lblCurrent.object == 'Jump-corrected movie':
+            outFolder = os.path.join(workingFolder, savefolder)
+            os.makedirs(outFolder, exist_ok=True)
+            tifffile.imwrite(os.path.join(outFolder, '1-jumpCorrected.tif'), self.tb.app.layers['Image'].data)
+            self.valid1.value = True
+            if el.get('nChannels', 1) == 2:
+                self.valid1.value = False
+                tifffile.imwrite(os.path.join(outFolder, '1-jumpCorrected-channel2.tif'),
+                                 self.tb.app.layers['Image channel 2'].data)
+                self.valid1.value = True
+
+    def _save_analysis(self, event):
+        try:
+            if self.corrFilename:
+                self.master.to_csv(self.corrFilename)
+            if self.jumpFrameFilename:
+                self.allminima.to_csv(self.jumpFrameFilename)
+            if self.jumpFrameMaxFilename:
+                self.allmaxima.to_csv(self.jumpFrameMaxFilename)
+            print("Analysis saved.")
+        except Exception as e:
+            print(f"Error saving analysis: {e}")
+
+    def _load_jump_corr(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        outFolder = os.path.join(workingFolder, savefolder, '1-jumpCorrected.tif')
+        self.tb.loadFromTiff(outFolder, nChannels=el.get('nChannels', 1), channel=1)
+        if el.get('nChannels', 1) == 2:
+            outFolder2 = os.path.join(workingFolder, savefolder, '1-jumpCorrected-channel2.tif')
+            self.tb.loadFromTiff(outFolder2, title='Image channel 2', nChannels=el['nChannels'], channel=2)
+        self._remove_layers('Masks', 'Avg', 'Annotations')
+
+    def _quick_load_jump_corr(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        outFolder = os.path.join(workingFolder, savefolder, '1-jumpCorrected.tif')
+        self.tb.loadQuickLook(outFolder)
+        self._remove_layers('Masks', 'Avg', 'Annotations')
+
+    def _load_motion_corr(self, event):
+        el = self.master.loc[self.xw.value]
+        workingFolder = self._resolve_folder(el)
+        outFolder = os.path.join(workingFolder, savefolder, '1-jumpCorrected-mc.tif')
+        self.tb.loadFromTiff(outFolder)
+        self._remove_layers('Masks', 'Avg', 'Annotations')
+
+    def _on_prev(self, event):
+        try:
+            z, x, y = self.tb.app.dims.current_step
+            if z > 0:
+                self.tb.app.dims.current_step = (z - 1, x, y)
+                self.cursor_src.data = dict(x=[z - 1, z - 1], y=self.cursor_src.data['y'])
+        except: pass
+
+    def _on_next(self, event):
+        try:
+            z, x, y = self.tb.app.dims.current_step
+            if z < self.tb.nFrames:
+                self.tb.app.dims.current_step = (z + 1, x, y)
+                self.cursor_src.data = dict(x=[z + 1, z + 1], y=self.cursor_src.data['y'])
+        except: pass
+
+    def _delete_selected(self, event):
+        x0 = self.sel_range_src.data['x0'][0]
+        x1 = self.sel_range_src.data['x1'][0]
+        if x0 is None or x1 is None:
+            return
+        intervals = self.master.at[self.xw.value, 'ExtraCorrectionIntervals']
+        if not isinstance(intervals, list):
+            intervals = []
+        intervals.append([int(x0), int(x1)])
+        self.master.at[self.xw.value, 'ExtraCorrectionIntervals'] = intervals
+        self._clear_selection()
+        self.update_plot()
+
+    def _undo_last_interval(self, event):
+        intervals = self.master.at[self.xw.value, 'ExtraCorrectionIntervals']
+        if isinstance(intervals, list) and len(intervals) > 0:
+            intervals.pop()
+            self.master.at[self.xw.value, 'ExtraCorrectionIntervals'] = intervals
+            self.update_plot()
+
+    def _delete_manual_interval(self, event):
+        intervals = self.master.at[self.xw.value, 'ExtraCorrectionIntervals']
+        if not isinstance(intervals, list):
+            intervals = []
+        intervals.append([self.frameStartInt.value, self.frameEndInt.value])
+        self.master.at[self.xw.value, 'ExtraCorrectionIntervals'] = intervals
+        self.update_plot()
+
+    def _set_first_last(self, event):
+        if self.master['first-last'].dtype != object:
+            self.master['first-last'] = self.master['first-last'].astype(object)
+        self.master.at[self.xw.value, 'first-last'] = f'{self.firstFrameInt.value}-{self.lastFrameInt.value}'
+        self.update_plot()
+
+    def _create_template(self, event):
+        x0 = self.sel_range_src.data['x0'][0]
+        x1 = self.sel_range_src.data['x1'][0]
+        if x0 is None or x1 is None:
+            return
+        i0 = int(x0); i1 = int(x1)
+        ys = np.array(self.src_orig.data['y'])[i0:i1]
+        if not len(ys):
+            return
+        self._template[0] = ys
+        self._distance_profile[0] = mass_ts.mass2(np.array(self.src_orig.data['y']), self._template[0])
+        self._clear_selection()
+        self.update_plot()
+
+
+def jumpFramesFinderPanel(master, allminima, allmaxima, tb, corrFilename=None, jumpFrameFilename=None, jumpFrameMaxFilename=None):
+    """
+    Panel-based interactive tool to find and correct jumps in fluorescence movies.
+    Now implemented as a wrapper around JumpFramesFinderPanel class.
+    """
+    pn.extension()
+    app = JumpFramesFinderPanel(master, allminima, allmaxima, tb, corrFilename, jumpFrameFilename, jumpFrameMaxFilename)
+    return app.show()
+
+# Class definition for JumpFramesFinderPanel will be inserted above this function.
 
 
 import itertools
