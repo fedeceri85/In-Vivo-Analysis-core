@@ -34,17 +34,59 @@ from pyqtgraph.parametertree import Parameter, ParameterTree
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore,QtWidgets
 import sys
+import os
 import pandas as pd
 import numpy as np
 import ast
 from scipy.signal import find_peaks
 import shapely
 from scipy.signal import peak_widths
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from traceUtilities import rollingMedianCorrection
 pg.setConfigOptions(antialias=True)
 pg.setConfigOption('background', 'w')
 pg.setConfigOption('foreground', 'k')
 
 COLORS = ['k','b','r','g','orange','y','cyan']
+
+def mad_zscore(trace):
+    """Normalize a trace using MAD-based z-score (robust to outliers/peaks)."""
+    med = np.median(trace)
+    mad = np.median(np.abs(trace - med))
+    return (trace - med) / (1.4826 * mad + 1e-10)
+
+def normalize_peak_positions(value):
+    """Convert peak position cell value into a clean list[int]."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return []
+
+    if isinstance(value, str):
+        text = value.strip()
+        if text == '' or text.lower() in ['nan', 'none']:
+            return []
+        try:
+            value = ast.literal_eval(text)
+        except Exception:
+            try:
+                return [int(float(text))]
+            except Exception:
+                return []
+
+    if isinstance(value, (np.ndarray, list, tuple, pd.Series)):
+        out = []
+        for item in value:
+            if item is None or (isinstance(item, float) and np.isnan(item)):
+                continue
+            try:
+                out.append(int(float(item)))
+            except Exception:
+                continue
+        return out
+
+    try:
+        return [int(float(value))]
+    except Exception:
+        return []
 
 _instance = QApplication.instance()
 if not _instance:
@@ -122,9 +164,9 @@ class mainWindow(pg.GraphicsView):
 
         params = [
         # {'name':'Strain','type':'list','values':['6N','Repaired']},
-            {'name':'Master file','type':'file'},
-            {'name':'Traces file','type':'file'},
-            {'name':'Correlation file','type':'file'},
+            {'name':'Master file','type':'file','value':''},
+            {'name':'Traces file','type':'file','value':''},
+            {'name':'Correlation file','type':'file','value':''},
             {'name':'Cell ID column','type':'list','values':{}},
             {'name':'Group 1','type':'list','values':[]},
             {'name':'Group 2','type':'list','values':[]},
@@ -147,10 +189,12 @@ class mainWindow(pg.GraphicsView):
 
         params2 = [
                 {'name':'Initial guess of peaks','type':'action'},
-                {'name':'Prominence','type':'slider','limits':[0,2],'step':0.01},
+                {'name':'Use MAD z-score','type':'bool','value':False},
+                {'name':'Prominence','type':'slider','limits':[0,10],'step':0.01,'value':0.2},
                 {'name':'Distance','type':'slider','limits':[0,300]},
-                {'name':'Height','type':'slider','limits':[0,1],'step':0.05},
+                {'name':'Height','type':'slider','limits':[0,10],'step':0.05},
                 {'name':'Correlation','type':'slider','limits':[0,1],'step':0.05},
+                {'name':'Min duration (s)','type':'float','value':0,'limits':[0,10],'step':0.05},
                 {'name':'Delete points','type':'bool','value':False},
                 {'name':'Add points','type':'bool','value':False},
                 {'name':'Save','type':'action'},
@@ -359,6 +403,13 @@ class mainWindow(pg.GraphicsView):
         prominence = self.p2['Prominence']
         distance = self.p2['Distance']
         xwCorrelation = self.p2['Correlation']
+        minDuration = self.p2['Min duration (s)']
+
+        use_zscore = self.p2['Use MAD z-score']
+
+        if 'Peak positions' not in self.master.columns:
+            self.master['Peak positions'] = [[] for _ in range(self.master.shape[0])]
+        self.master['Peak positions'] = self.master['Peak positions'].astype(object)
 
         for j,row in self.el.iterrows():
             dff0 =  self.alltraces[row['Cell ID']].dropna().values
@@ -367,16 +418,30 @@ class mainWindow(pg.GraphicsView):
             else:
                 correlation = None
 
+            # Optionally normalize per-cell before peak detection
+            if use_zscore:
+                # Remove slow drift before computing MAD so drifty traces don't inflate the noise estimate
+                corrected = rollingMedianCorrection(dff0, rollingN=2000)
+                detect_trace = mad_zscore(corrected)
+            else:
+                detect_trace = dff0
+
             if xwHeight ==0:
                 pheight = None
             else:
                 pheight = xwHeight
-            peaks = list(find_peaks(dff0,prominence=prominence,distance=distance, height =pheight)[0])
+            if minDuration > 0:
+                pwidth = int(minDuration * row['fps'])
+            else:
+                pwidth = None
+            peaks = list(find_peaks(detect_trace,prominence=prominence,distance=distance, height=pheight, width=pwidth)[0])
 
             self.master.loc[j,'Peak prominence'] = prominence
             self.master.loc[j,'Peak min distance'] = distance
             self.master.loc[j,'Peak min height'] = xwHeight
             self.master.loc[j, 'Peak correlation'] = xwCorrelation
+            self.master.loc[j, 'Use MAD z-score'] = bool(use_zscore)
+            self.master.loc[j, 'Min duration (s)'] = minDuration
             fps1 = int(row['fps']*1.5)
             fps2 = int(row['fps'])
 
@@ -408,6 +473,15 @@ class mainWindow(pg.GraphicsView):
         except:
             self.master = pd.read_excel(self.p['Master file'])
 
+        if self.master is None or self.master.shape[0] == 0:
+            self.celltypes = []
+            columns = list(self.master.columns) if self.master is not None else []
+            self.p.keys()['Cell ID column'].setLimits(columns)
+            self.p.keys()['Group 1'].setLimits(columns)
+            self.p.keys()['Group 2'].setLimits([' '] + columns)
+            self.p.keys()['Hue group'].setLimits([' '] + columns)
+            return
+
         try:
             self.master['Peak positions'] = self.master['Peak positions'].apply(ast.literal_eval)
         except:
@@ -418,6 +492,13 @@ class mainWindow(pg.GraphicsView):
         except:
             pass
 
+        if 'Peak positions' not in self.master.columns:
+            self.master['Peak positions'] = [[] for _ in range(self.master.shape[0])]
+        self.master['Peak positions'] = self.master['Peak positions'].apply(normalize_peak_positions).astype(object)
+
+        if 'Peak positions hq' in self.master.columns:
+            self.master['Peak positions hq'] = self.master['Peak positions hq'].apply(normalize_peak_positions).astype(object)
+
 
         celltypes = self.master['Cell type'].unique()
         self.celltypes = celltypes
@@ -426,10 +507,11 @@ class mainWindow(pg.GraphicsView):
         
 
         #self.p.keys()['Cell ID column'].setOpts(value={'1':'2123'})
-        self.p.keys()['Cell ID column'].setLimits(self.master.columns)
-        self.p.keys()['Group 1'].setLimits(self.master.columns)
-        self.p.keys()['Group 2'].setLimits([' ']+list(self.master.columns))
-        self.p.keys()['Hue group'].setLimits([' ']+list(self.master.columns))
+        columns = list(self.master.columns)
+        self.p.keys()['Cell ID column'].setLimits(columns)
+        self.p.keys()['Group 1'].setLimits(columns)
+        self.p.keys()['Group 2'].setLimits([' '] + columns)
+        self.p.keys()['Hue group'].setLimits([' '] + columns)
        # self.p.keys()['Peak group'].setLimits(list(self.master.columns))
 
         if 'Cell ID' in self.master.columns:
@@ -444,10 +526,27 @@ class mainWindow(pg.GraphicsView):
         
         self.changeGroupsCb()
 
-        self.p2.keys()['Prominence'].setValue(self.master['Peak prominence'].values[0])
-        self.p2.keys()['Distance'].setValue(self.master['Peak min distance'].values[0])
-        self.p2.keys()['Height'].setValue(self.master['Peak min height'].values[0])
-        self.p2.keys()['Correlation'].setValue(self.master['Peak correlation'].values[0])
+        if 'Peak prominence' in self.master.columns:
+            self.p2.keys()['Prominence'].setValue(self.master['Peak prominence'].values[0])
+        if 'Peak min distance' in self.master.columns:
+            self.p2.keys()['Distance'].setValue(self.master['Peak min distance'].values[0])
+        if 'Peak min height' in self.master.columns:
+            self.p2.keys()['Height'].setValue(self.master['Peak min height'].values[0])
+        if 'Peak correlation' in self.master.columns:
+            self.p2.keys()['Correlation'].setValue(self.master['Peak correlation'].values[0])
+        if 'Use MAD z-score' in self.master.columns:
+            value = self.master['Use MAD z-score'].values[0]
+            if isinstance(value, str):
+                value = value.strip().lower() in ['1', 'true', 'yes', 'y', 't']
+            elif pd.isna(value):
+                value = False
+            else:
+                value = bool(value)
+            self.p2.keys()['Use MAD z-score'].setValue(value)
+        if 'Min duration (s)' in self.master.columns:
+            value = self.master['Min duration (s)'].values[0]
+            if not pd.isna(value):
+                self.p2.keys()['Min duration (s)'].setValue(float(value))
 
 
     def loadTracesCb(self):
@@ -534,7 +633,8 @@ class mainWindow(pg.GraphicsView):
                     pen = 'k'
 
                 self.plot.plot(x,trace,pen=pen,name=str(self.currentIds[i]))
-                xpeak = np.array(self.el.iloc[i][self.p['Peak group']]).astype(int)
+                xpeak = np.array(normalize_peak_positions(self.el.iloc[i][self.p['Peak group']]), dtype=int)
+                xpeak = xpeak[(xpeak >= 0) & (xpeak < trace.shape[0])]
 
                 if self.p['Peaks']:
                     sp = pg.ScatterPlotItem(x[xpeak],trace[xpeak],name=str(self.currentIds[i])+'_peaks',hoverable=True,hoversize=20)
@@ -585,7 +685,8 @@ class mainWindow(pg.GraphicsView):
                 else:
                     pen = 'k'
                 self.plot.plot(x,trace,pen=pen,name=str(self.currentIds[i]))
-                xpeak = np.array(self.el.iloc[i][self.p['Peak group']]).astype(int)
+                xpeak = np.array(normalize_peak_positions(self.el.iloc[i][self.p['Peak group']]), dtype=int)
+                xpeak = xpeak[(xpeak >= 0) & (xpeak < trace.shape[0])]
 
                 if self.p['Peaks']:
                     sp = pg.ScatterPlotItem(x[xpeak],trace[xpeak],name=str(self.currentIds[i])+'_peaks',hoverable=True,hoversize=20)
@@ -607,6 +708,16 @@ class mainWindow(pg.GraphicsView):
                 self.p.keys()['File'].setValue(str(self.group2List[group2Index-1]))
 
     def changeGroupsCb(self):
+        if self.master is None or self.master.shape[0] == 0:
+            self.group1List = np.array([])
+            self.group2List = np.array([])
+            self.colorsDict = {}
+            self.p.keys()['Group 1 select'].setLimits((0,0))
+            self.p.keys()['Group 1 select'].setValue(0)
+            self.p.keys()['Group 2 select'].setLimits((0,0))
+            self.p.keys()['Group 2 select'].setValue(0)
+            return
+
         self.group1List = self.master[self.p['Group 1']].unique()
         self.p.keys()['Group 1 select'].setLimits((0,len(self.group1List)-1))
         self.p.keys()['Group 1 select'].setValue(0)
