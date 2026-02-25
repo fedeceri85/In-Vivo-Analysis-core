@@ -1,0 +1,73 @@
+UPSTREAM SYNC CHEAT SHEET
+
+Setup check (run once)
+1) git remote -v
+2) git remote show upstream
+
+Weekly sync (safe)
+1) git fetch upstream --prune
+2) git checkout main
+3) git pull --ff-only origin main
+4) git merge --ff-only upstream/main
+5) git push origin main
+
+If step 4 fails (branches diverged)
+1) git checkout -b integrate/upstream-YYYY-MM-DD main
+2) git merge upstream/main
+3) Resolve conflicts
+4) git add -A
+5) git commit -m "Merge upstream/main"
+6) git push -u origin integrate/upstream-YYYY-MM-DD
+7) Open Pull Request into main
+
+See all upstream branches
+1) git fetch upstream --prune
+2) git branch -r
+
+Start work from an upstream branch
+1) git switch -c my-work --track upstream/<branch-name>
+
+Update your branch with upstream branch changes later
+1) git fetch upstream --prune
+2) git checkout my-work
+3) git merge upstream/<branch-name>
+
+Keep remotes clean
+1) git fetch --all --prune
+
+Notes
+- origin = your GitHub repo
+- upstream = source repo you follow
+- fetch does not change your files; it only updates remote refs
+
+Merge vs Rebase vs Reset (quick guide)
+
+Use MERGE when:
+- You want to combine histories safely.
+- You are syncing shared branches (like main).
+Command:
+- git merge upstream/main
+
+Use REBASE when:
+- You want a clean linear history on your own feature branch.
+- You have local commits and want them replayed on top of updated main.
+Commands:
+- git fetch origin
+- git rebase origin/main
+Warning:
+- Rebase rewrites commit hashes. Avoid rebasing shared/public branches.
+
+Use RESET when:
+- You want to move your branch pointer back/elsewhere.
+- You want to discard or uncommit local work.
+Commands:
+- git reset --soft HEAD~1    (undo commit, keep staged)
+- git reset --mixed HEAD~1   (undo commit, keep unstaged)
+- git reset --hard HEAD~1    (undo commit and discard changes)
+Warning:
+- --hard is destructive for uncommitted changes.
+
+Simple decision rule:
+- Shared branch (main): merge
+- Personal branch before PR: rebase is okay
+- Local undo/rewind: reset

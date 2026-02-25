@@ -978,7 +978,7 @@ class JumpFramesFinderPanel:
 
     def _init_layout(self):
         # Widget sizing
-        _IW  = 90    # spinner width
+        _IW  = 84    # spinner width
         _BW  = 170   # button width
         _COL = 200   # column width
 
@@ -1038,7 +1038,9 @@ class JumpFramesFinderPanel:
             pn.pane.Str('─ Edit ─', margin=(4, 0)),
             self.buttonDeleteSel,
             self.buttonUndo,
-            width=_BW + 10,
+            pn.Row(self.frameStartInt, self.frameEndInt),
+            self.buttonManualInterval,
+            width=_COL,
         )
         nav_col = pn.Column(
             self.xwUpdateRate,
