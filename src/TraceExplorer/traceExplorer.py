@@ -88,6 +88,24 @@ def normalize_peak_positions(value):
     except Exception:
         return []
 
+def parse_float_or_none(value):
+    """Parse a value into float, returning None when the value is empty/invalid."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == '' or value.lower() in ['nan', 'none']:
+            return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except Exception:
+        return None
+
 _instance = QApplication.instance()
 if not _instance:
     _instance = QApplication([])
@@ -527,13 +545,21 @@ class mainWindow(pg.GraphicsView):
         self.changeGroupsCb()
 
         if 'Peak prominence' in self.master.columns:
-            self.p2.keys()['Prominence'].setValue(self.master['Peak prominence'].values[0])
+            value = parse_float_or_none(self.master['Peak prominence'].values[0])
+            if value is not None:
+                self.p2.keys()['Prominence'].setValue(value)
         if 'Peak min distance' in self.master.columns:
-            self.p2.keys()['Distance'].setValue(self.master['Peak min distance'].values[0])
+            value = parse_float_or_none(self.master['Peak min distance'].values[0])
+            if value is not None:
+                self.p2.keys()['Distance'].setValue(value)
         if 'Peak min height' in self.master.columns:
-            self.p2.keys()['Height'].setValue(self.master['Peak min height'].values[0])
+            value = parse_float_or_none(self.master['Peak min height'].values[0])
+            if value is not None:
+                self.p2.keys()['Height'].setValue(value)
         if 'Peak correlation' in self.master.columns:
-            self.p2.keys()['Correlation'].setValue(self.master['Peak correlation'].values[0])
+            value = parse_float_or_none(self.master['Peak correlation'].values[0])
+            if value is not None:
+                self.p2.keys()['Correlation'].setValue(value)
         if 'Use MAD z-score' in self.master.columns:
             value = self.master['Use MAD z-score'].values[0]
             if isinstance(value, str):
@@ -544,9 +570,9 @@ class mainWindow(pg.GraphicsView):
                 value = bool(value)
             self.p2.keys()['Use MAD z-score'].setValue(value)
         if 'Min duration (s)' in self.master.columns:
-            value = self.master['Min duration (s)'].values[0]
-            if not pd.isna(value):
-                self.p2.keys()['Min duration (s)'].setValue(float(value))
+            value = parse_float_or_none(self.master['Min duration (s)'].values[0])
+            if value is not None:
+                self.p2.keys()['Min duration (s)'].setValue(value)
 
 
     def loadTracesCb(self):
@@ -600,10 +626,22 @@ class mainWindow(pg.GraphicsView):
             self.el = self.master.loc[(self.master[self.p['Group 1']]==self.group1List[group1Index]) & (self.master['Cell type'].isin(self.celltypes))]
             
             #Set value of peak detection
-            self.p2.keys()['Prominence'].setValue(self.el['Peak prominence'].values[0])
-            self.p2.keys()['Distance'].setValue(self.el['Peak min distance'].values[0])
-            self.p2.keys()['Height'].setValue(self.el['Peak min height'].values[0])
-            self.p2.keys()['Correlation'].setValue(self.el['Peak correlation'].values[0])
+            value = parse_float_or_none(self.el['Peak prominence'].values[0])
+            if value is not None:
+                self.p2.keys()['Prominence'].setValue(value)
+            value = parse_float_or_none(self.el['Peak min distance'].values[0])
+            if value is not None:
+                self.p2.keys()['Distance'].setValue(value)
+            value = parse_float_or_none(self.el['Peak min height'].values[0])
+            if value is not None:
+                self.p2.keys()['Height'].setValue(value)
+            value = parse_float_or_none(self.el['Peak correlation'].values[0])
+            if value is not None:
+                self.p2.keys()['Correlation'].setValue(value)
+            if 'Min duration (s)' in self.el.columns:
+                value = parse_float_or_none(self.el['Min duration (s)'].values[0])
+                if value is not None:
+                    self.p2.keys()['Min duration (s)'].setValue(value)
 
             self.currentIds = self.el[self.p['Cell ID column']].values
             if len(self.colorsDict)>0:
@@ -653,10 +691,22 @@ class mainWindow(pg.GraphicsView):
             self.currentIds = self.el[self.p['Cell ID column']].values
             
             #Set value of peak detection
-            self.p2.keys()['Prominence'].setValue(self.el['Peak prominence'].values[0])
-            self.p2.keys()['Distance'].setValue(self.el['Peak min distance'].values[0])
-            self.p2.keys()['Height'].setValue(self.el['Peak min height'].values[0])
-            self.p2.keys()['Correlation'].setValue(self.el['Peak correlation'].values[0])
+            value = parse_float_or_none(self.el['Peak prominence'].values[0])
+            if value is not None:
+                self.p2.keys()['Prominence'].setValue(value)
+            value = parse_float_or_none(self.el['Peak min distance'].values[0])
+            if value is not None:
+                self.p2.keys()['Distance'].setValue(value)
+            value = parse_float_or_none(self.el['Peak min height'].values[0])
+            if value is not None:
+                self.p2.keys()['Height'].setValue(value)
+            value = parse_float_or_none(self.el['Peak correlation'].values[0])
+            if value is not None:
+                self.p2.keys()['Correlation'].setValue(value)
+            if 'Min duration (s)' in self.el.columns:
+                value = parse_float_or_none(self.el['Min duration (s)'].values[0])
+                if value is not None:
+                    self.p2.keys()['Min duration (s)'].setValue(value)
             
             
             #print(self.alltraces[ids.values].dropna())
