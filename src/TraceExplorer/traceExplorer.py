@@ -173,6 +173,27 @@ def parse_float_or_none(value):
     except Exception:
         return None
 
+def load_dataframe_with_fallback(filename):
+    """Load tabular data from parquet/csv/excel, preferring parser by extension."""
+    extension = os.path.splitext(str(filename))[1].lower()
+
+    if extension == '.parquet':
+        return pd.read_parquet(filename)
+    if extension == '.csv':
+        return pd.read_csv(filename)
+    if extension in ['.xls', '.xlsx', '.xlsm', '.xlsb', '.ods', '.odf', '.odt']:
+        return pd.read_excel(filename)
+
+    loaders = [pd.read_parquet, pd.read_csv, pd.read_excel]
+    last_error = None
+    for loader in loaders:
+        try:
+            return loader(filename)
+        except Exception as e:
+            last_error = e
+
+    raise last_error
+
 _instance = QApplication.instance()
 if not _instance:
     _instance = QApplication([])
@@ -645,16 +666,10 @@ class mainWindow(pg.GraphicsView):
 
 
     def loadTracesCb(self):
-        try:
-            self.alltraces = pd.read_csv(self.p['Traces file'])
-        except:
-            self.alltraces = pd.read_excel(self.p['Traces file'])   
+        self.alltraces = load_dataframe_with_fallback(self.p['Traces file'])
 
     def loadCorrelationCb(self):
-        try:
-            self.allCorrTraces = pd.read_csv(self.p['Correlation file'])
-        except:
-            self.allCorrTraces = pd.read_excel(self.p['Correlation file'])   
+        self.allCorrTraces = load_dataframe_with_fallback(self.p['Correlation file'])
 
 
     def plotCb(self):
