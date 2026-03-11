@@ -15,6 +15,7 @@ import plotly.graph_objs as go
 import mass_ts
 from pathlib import Path
 import traceback
+from IPython.display import display
 from bokeh.plotting import figure as bk_figure
 from bokeh.models import (ColumnDataSource, BoxAnnotation, CustomJS,
                            BoxSelectTool)
@@ -1524,7 +1525,7 @@ colors2 = [
     '#17becf'   # blue-teal
 ]
 
-def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorrelation=True):
+def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorrelation=True,ages_dict=None):
     """
     Creates an interactive plot of multiple traces using ipywidgets with sliders for navigation.
     Parameters
@@ -1540,6 +1541,8 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
         Label for the x-axis. Default is 'Time (s)'.
     showCorrelation : bool, optional
         If True, calculates and displays correlation between traces. Default is True.
+    ages_dict : dict, optional
+        Dictionary mapping trace names to ages. If provided, ages will be displayed in the plot title
     Returns
     -------
     None
@@ -1555,7 +1558,7 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
 
     """
     identifiers = list(alltraces.keys())
-    xw = widgets.IntSlider(min=0,max=np.size(identifiers),step=1,value=0,continuous_update=False,description='Recording #')
+    xw = widgets.IntSlider(min=0,max=max(np.size(identifiers)-1, 0),step=1,value=0,continuous_update=False,description='Recording #')
     xw2 = widgets.IntSlider(min=0,max=100,step=1,value=0,continuous_update=False,description='Trace #')
 
     prevButton = widgets.Button(description = 'Previous')
@@ -1564,10 +1567,30 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
     nextButton.style.button_color = 'pink' 
     
     hbox = widgets.HBox((prevButton,nextButton))
-    fig = go.FigureWidget(data=[],layout=go.Layout({ 'autosize':True,'height':750, 'xaxis_title': xlabel }))
+    fig = go.FigureWidget(data=[],layout=go.Layout({ 'autosize':True,'height':750, 'xaxis_title': xlabel, 'width': 1050 }))
+    corrFig = go.FigureWidget(
+        data=[],
+        layout=go.Layout(
+            {
+                'autosize': True,
+                'height': 750,
+                'width': 520,
+                'title': 'Correlation matrix',
+                'xaxis_title': 'Trace #',
+                'yaxis_title': 'Trace #'
+            }
+        )
+    )
+    corrFig.update_xaxes(constrain='domain')
+    corrFig.update_yaxes(scaleanchor='x', scaleratio=1, constrain='domain')
+    corrFig.update_layout(margin=dict(l=40, r=10, t=50, b=40))
 
     output = widgets.Output()
-    ui = widgets.VBox([xw,xw2,hbox,fig, output])
+    if showCorrelation:
+        plotPanel = widgets.HBox([fig, corrFig])
+    else:
+        plotPanel = fig
+    ui = widgets.VBox([xw,xw2,hbox,plotPanel, output])
 
 
     def on_next_clicked(click):
@@ -1584,9 +1607,14 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
 
     def f(x,x2):
         colors = itertools.cycle(colors2)
-        
-       
-        print(identifiers[x])
+        with output:
+            output.clear_output(wait=True)
+            print(identifiers[x])
+
+        if ages_dict is not None:
+            fig.layout.title.text = 'P' + str(ages_dict.get(identifiers[x], ''))
+        else:
+            fig.layout.title.text = ''
         
         dff0s = alltraces[identifiers[x]]
         if 'Time (s)' in dff0s.columns:
@@ -1611,6 +1639,7 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
 
 
             fig.add_traces(datatoAdd)
+            corrInput = dff0s
 
         else:
             fig.data = []
@@ -1628,9 +1657,27 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
 
             datatoAdd = go.Scatter(x=x,y= trace, mode= 'lines',line=dict(color=color, width=2,),  name ='',showlegend=False, )
             fig.add_trace(datatoAdd)
+            corrInput = dff0s.iloc[:, [x2-1]]
 
-        fps = 1/(np.diff(time).mean())
-        tu.calculateCorrelation(dff0s,5*60*fps)
+        if showCorrelation:
+            corrValues = corrInput.corr().values
+            tickVals = np.arange(corrValues.shape[0])
+            tickText = [str(v) for v in corrInput.columns]
+
+            corrFig.data = []
+            corrFig.add_trace(
+                go.Heatmap(
+                    z=corrValues,
+                    x=tickVals,
+                    y=tickVals,
+                    zmin=0,
+                    zmax=1,
+                    colorscale='Greens',
+                    colorbar=dict(title='r')
+                )
+            )
+            corrFig.update_xaxes(tickmode='array', tickvals=tickVals, ticktext=tickText)
+            corrFig.update_yaxes(tickmode='array', tickvals=tickVals, ticktext=tickText, autorange='reversed')
         
     out = widgets.interactive_output(f, {'x': xw,'x2':xw2})
     display(ui,out)

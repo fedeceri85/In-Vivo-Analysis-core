@@ -4,7 +4,7 @@
 import numpy as np
 import os 
 import pandas as pd
-from scipy.signal import savgol_filter, argrelmin
+from scipy.signal import savgol_filter, argrelmin, butter, filtfilt
 from scipy.interpolate import interp1d
 
 def loadRoisFromFile(filename):
@@ -131,6 +131,120 @@ def rollingMedianCorrection(traces,rollingN = 1000):
     elif traces.ndim == 1:
         traces2 = traces2.values #+ traces[0]
         return traces2[:,0]
+
+
+def rollingPercentileCorrection(traces, windowFrames=1200, percentile=10, center=True, minPeriods=None):
+    """
+    Remove slow baseline drift by subtracting a rolling low-percentile baseline.
+    This is often more stable than high-pass filtering for dF/F0 traces with gaps.
+    """
+    traces = np.asarray(traces, dtype=float)
+    is1d = traces.ndim == 1
+    if is1d:
+        traces = traces[:, None]
+
+    if minPeriods is None:
+        minPeriods = max(10, int(windowFrames / 5))
+
+    out = np.full_like(traces, np.nan, dtype=float)
+    q = percentile / 100.0
+
+    for i in range(traces.shape[1]):
+        s = pd.Series(traces[:, i])
+        baseline = s.rolling(windowFrames, center=center, min_periods=minPeriods).quantile(q)
+        baseline = baseline.interpolate(limit_direction='both')
+        out[:, i] = s.values - baseline.values
+
+    if is1d:
+        return out[:, 0]
+    return out
+
+
+def _highpassFilterTraceWithNans(trace, fps=20, cutoffHz=1/60, order=3):
+    """
+    High-pass filter a 1D trace while preserving NaN gaps.
+    """
+    trace = np.asarray(trace, dtype=float)
+    out = np.full(trace.shape, np.nan, dtype=float)
+
+    if trace.size == 0:
+        return out
+
+    nyquist = fps / 2.0
+    cutoffHz = min(max(cutoffHz, 1e-6), nyquist * 0.999)
+    b, a = butter(order, cutoffHz / nyquist, btype='high')
+    sos = butter(order, cutoffHz / nyquist, btype='high', output='sos')
+    padlen = 3 * (max(len(a), len(b)) - 1)
+
+    valid = np.isfinite(trace)
+    if not np.any(valid):
+        return out
+
+    validIdx = np.where(valid)[0]
+    splitIdx = np.where(np.diff(validIdx) > 1)[0]
+    starts = np.r_[0, splitIdx + 1]
+    ends = np.r_[splitIdx, len(validIdx) - 1]
+
+    for start, end in zip(starts, ends):
+        idx = validIdx[start:end + 1]
+        segment = trace[idx]
+
+        if segment.size <= padlen:
+            out[idx] = segment - np.nanmedian(segment)
+        else:
+            try:
+                from scipy.signal import sosfiltfilt as _sosfiltfilt
+                out[idx] = _sosfiltfilt(sos, segment)
+            except Exception:
+                out[idx] = filtfilt(b, a, segment)
+
+    return out
+
+
+def highpassDetrendForCorrelation(traces, fps=20, cutoffHz=1/60, order=3, regressGlobal=False):
+    """
+    High-pass detrend traces for correlation analysis.
+    Parameters
+    ----------
+    traces : numpy.ndarray
+        1D or 2D traces. For 2D, columns are traces.
+    fps : float, optional
+        Sampling rate in Hz (default=20).
+    cutoffHz : float, optional
+        High-pass cutoff in Hz (default=1/60, i.e. 60 s drift removal).
+    order : int, optional
+        Butterworth filter order (default=3).
+    regressGlobal : bool, optional
+        If True, regress the filtered global mean signal from each trace.
+    Returns
+    -------
+    numpy.ndarray
+        Detrended traces with same shape as input.
+    """
+    traces = np.asarray(traces, dtype=float)
+
+    if traces.ndim == 1:
+        return _highpassFilterTraceWithNans(traces, fps=fps, cutoffHz=cutoffHz, order=order)
+
+    out = np.zeros_like(traces, dtype=float)
+    for i in range(traces.shape[1]):
+        out[:, i] = _highpassFilterTraceWithNans(traces[:, i], fps=fps, cutoffHz=cutoffHz, order=order)
+
+    if regressGlobal:
+        globalSignal = np.nanmean(out, axis=1)
+        for i in range(out.shape[1]):
+            y = out[:, i]
+            valid = np.isfinite(y) & np.isfinite(globalSignal)
+            if valid.sum() < 3:
+                continue
+
+            X = np.column_stack((globalSignal[valid], np.ones(valid.sum())))
+            beta = np.linalg.lstsq(X, y[valid], rcond=None)[0]
+            y2 = y.copy()
+            y2[valid] = y[valid] - X @ beta
+            out[:, i] = y2
+
+    return out
 
 def fillMissingValues(dff0):
     """
@@ -332,14 +446,36 @@ def calculatePixelRollingCorr(folder, window, downsample=4, addNoise=False, mask
     return df
 
 
-def concatenateRecordings(el, alltraces, rollingMedianCorrectionNumber=None):
+def concatenateRecordings(el,
+                          alltraces,
+                          rollingMedianCorrectionNumber=None,
+                          preprocessing=None,
+                          fps=20,
+                          highpassCutoffHz=1/60,
+                          highpassOrder=3,
+                          rollingPercentileWindowFrames=1200,
+                          rollingPercentile=10):
     """
     Concatenates traces from recordings in a sequence based on matching ROI numbers.
     Args:
         el (pandas.DataFrame): DataFrame containing metadata for cells from different recordings in the sequence.
                                 Must include columns: 'Cell ID', 'Number in sequence', 'Matched RoiN', 'fps'
         alltraces (dict): Dictionary containing trace data for each cell, with Cell IDs as keys
-        rollingMedianCorrectionNumber (int, optional): Window size for rolling median correction. Defaults to None.
+        rollingMedianCorrectionNumber (int, optional): Window size for rolling median correction.
+                    Used when preprocessing='rolling_median'. Defaults to None.
+        preprocessing (str, optional): Per-trace detrending before concatenation. One of:
+                    - 'rolling_median': rolling median subtraction
+                    - 'highpass': Butterworth high-pass filtering
+                    - 'rolling_percentile': rolling low-percentile baseline subtraction
+                    - None / 'none': no detrending
+                    Defaults to None.
+        fps (float, optional): Sampling rate in Hz for high-pass detrending. Defaults to 20.
+        highpassCutoffHz (float, optional): High-pass cutoff in Hz. Defaults to 1/60.
+        highpassOrder (int, optional): High-pass Butterworth order. Defaults to 3.
+        rollingPercentileWindowFrames (int, optional): Window size for rolling percentile detrending.
+                                Defaults to 1200 (60 s at 20 fps).
+        rollingPercentile (float, optional): Percentile used for rolling baseline.
+                                Defaults to 10.
     Returns:
         pandas.DataFrame: Concatenated traces with the following properties:
             - Columns are ROI numbers
@@ -354,6 +490,27 @@ def concatenateRecordings(el, alltraces, rollingMedianCorrectionNumber=None):
         - Automatically trims trailing NaN values
         - Sorts output columns (ROIs) in ascending order
     """
+    def _preprocessTrace(traceValues):
+        thisTrace = traceValues
+        if preprocessing == 'rolling_median' or (preprocessing is None and rollingMedianCorrectionNumber is not None):
+            if rollingMedianCorrectionNumber is not None:
+                thisTrace = rollingMedianCorrection(thisTrace, rollingN=rollingMedianCorrectionNumber)
+        elif preprocessing == 'highpass':
+            thisTrace = highpassDetrendForCorrelation(
+                thisTrace,
+                fps=fps,
+                cutoffHz=highpassCutoffHz,
+                order=highpassOrder,
+                regressGlobal=False
+            )
+        elif preprocessing == 'rolling_percentile':
+            thisTrace = rollingPercentileCorrection(
+                thisTrace,
+                windowFrames=rollingPercentileWindowFrames,
+                percentile=rollingPercentile
+            )
+        return thisTrace
+
     cellIDs = list(el['Cell ID'].values)
 
 
@@ -394,6 +551,7 @@ def concatenateRecordings(el, alltraces, rollingMedianCorrectionNumber=None):
 
             this_el = el[el['Cell ID']== cellid]
             this_dff0s = alltraces[cellid].dropna()
+            this_dff0s = _preprocessTrace(this_dff0s.values)
 
             sequenceN = this_el['Number in sequence'].values[0]
             matchedRoiN = this_el['Matched RoiN'].values[0]
@@ -417,7 +575,8 @@ def concatenateRecordings(el, alltraces, rollingMedianCorrectionNumber=None):
                         
                         next_cellID = next_el['Cell ID'].values[0]
                         processedCells.append(next_cellID)
-                        concatenatedTrace = np.hstack((concatenatedTrace,alltraces[next_cellID].dropna(),[np.nan]*1000,))
+                        nextTrace = _preprocessTrace(alltraces[next_cellID].dropna().values)
+                        concatenatedTrace = np.hstack((concatenatedTrace,nextTrace,[np.nan]*1000,))
                     else:
                         concatenatedTrace = np.hstack((concatenatedTrace,[np.nan]*(sequenceSizes[float(j)]+1000)))
                         
@@ -436,15 +595,25 @@ def concatenateRecordings(el, alltraces, rollingMedianCorrectionNumber=None):
 
     dff0s = dff0s.reindex(sorted(dff0s.columns), axis=1)
     
-    if rollingMedianCorrectionNumber is not None:
-            dff0s.loc[:,:] = rollingMedianCorrection(dff0s.values,rollingN=rollingMedianCorrectionNumber)
+    # if rollingMedianCorrectionNumber is not None:
+    #         dff0s.loc[:,:] = rollingMedianCorrection(dff0s.values,rollingN=rollingMedianCorrectionNumber)
     time = np.arange(dff0s.shape[0])/el['fps'].values[0]
     dff0s['Time (s)'] = time
     return dff0s
 
 
 import seaborn as sns
-def calculateCorrelation(dff0s,min_period,rollingMedianCorrectionNumber = 2000,drawCorrMatrixLabels = True):
+def calculateCorrelation(dff0s,
+                         min_period,
+                         rollingMedianCorrectionNumber=2000,
+                         drawCorrMatrixLabels=True,
+                         preprocessing='highpass',
+                         fps=20,
+                         highpassCutoffHz=1/60,
+                         highpassOrder=3,
+                         regressGlobal=False,
+                         rollingPercentileWindowFrames=1200,
+                         rollingPercentile=10):
     """
     Calculate correlation matrix between signals and display it as a heatmap.
     Parameters
@@ -454,11 +623,29 @@ def calculateCorrelation(dff0s,min_period,rollingMedianCorrectionNumber = 2000,d
     min_period : int
         Minimum number of valid observations required to calculate correlation.
     rollingMedianCorrectionNumber : int, optional
-        Window size for rolling median correction. If None, no correction is applied.
+        Window size for rolling median correction (used when preprocessing='rolling_median').
         Default is 2000.
     drawCorrMatrixLabels : bool, optional
         Whether to display axis labels in the correlation matrix heatmap.
         Default is True.
+    preprocessing : str, optional
+        Detrending method for correlation. One of:
+        - 'highpass' (default): Butterworth high-pass filtering
+        - 'rolling_median': rolling median subtraction
+        - 'rolling_percentile': rolling low-percentile baseline subtraction
+        - None / 'none': no detrending
+    fps : float, optional
+        Sampling rate in Hz for high-pass detrending (default=20).
+    highpassCutoffHz : float, optional
+        High-pass cutoff in Hz (default=1/60).
+    highpassOrder : int, optional
+        Butterworth high-pass filter order (default=3).
+    regressGlobal : bool, optional
+        If True, regress filtered global signal before correlation (default=False).
+    rollingPercentileWindowFrames : int, optional
+        Window size for rolling percentile detrending (default=1200).
+    rollingPercentile : float, optional
+        Percentile for rolling baseline detrending (default=10).
     Returns
     -------
     pandas.DataFrame
@@ -466,7 +653,7 @@ def calculateCorrelation(dff0s,min_period,rollingMedianCorrectionNumber = 2000,d
     Notes
     -----
     The function performs the following steps:
-    1. Applies rolling median correction if specified
+    1. Applies selected detrending method
     2. Calculates correlation matrix
     3. Displays upper triangle of correlation matrix as a heatmap
     4. Uses green color palette for visualization
@@ -474,9 +661,39 @@ def calculateCorrelation(dff0s,min_period,rollingMedianCorrectionNumber = 2000,d
     """
     #min_period = 5*60*el['fps'].values[0]
     dff0s2 = dff0s.copy()
-    if rollingMedianCorrectionNumber is not None:
-        dff0s2.iloc[:,:] = rollingMedianCorrection(dff0s.values,rollingN=rollingMedianCorrectionNumber) # Subtract median to remove wobbling for corr calculation
-    values = dff0s2.corr(min_periods=min_period)
+
+    if 'Time (s)' in dff0s2.columns:
+        signalCols = list(dff0s2.columns[:-1])
+    else:
+        signalCols = list(dff0s2.columns)
+
+    if preprocessing == 'rolling_median':
+        if rollingMedianCorrectionNumber is not None:
+            dff0s2.loc[:, signalCols] = rollingMedianCorrection(
+                dff0s2.loc[:, signalCols].values,
+                rollingN=rollingMedianCorrectionNumber
+            )
+    elif preprocessing == 'highpass':
+        dff0s2.loc[:, signalCols] = highpassDetrendForCorrelation(
+            dff0s2.loc[:, signalCols].values,
+            fps=fps,
+            cutoffHz=highpassCutoffHz,
+            order=highpassOrder,
+            regressGlobal=regressGlobal
+        )
+    elif preprocessing == 'rolling_percentile':
+        dff0s2.loc[:, signalCols] = rollingPercentileCorrection(
+            dff0s2.loc[:, signalCols].values,
+            windowFrames=rollingPercentileWindowFrames,
+            percentile=rollingPercentile
+        )
+    #Substitute constant values across columns with nans to avoid undefined correlations
+    dz = np.diff(dff0s2.loc[:, signalCols],axis=0)
+    keep = np.argwhere(dz!=0)[:,0]
+    discard = np.argwhere(dz==0)[:,0]
+    dff0s2.loc[dff0s2.index[discard], signalCols] = np.nan
+        
+    values = dff0s2.loc[:, signalCols].corr(min_periods=min_period)
 
     mask = np.triu(np.ones_like(values, dtype=bool))
     cmap =  sns.color_palette('Greens_r', as_cmap=True).copy()
