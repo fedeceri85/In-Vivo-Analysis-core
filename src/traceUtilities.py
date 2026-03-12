@@ -7,6 +7,62 @@ import pandas as pd
 from scipy.signal import savgol_filter, argrelmin, butter, filtfilt
 from scipy.interpolate import interp1d
 
+
+def determineLocalDrive(alldata, folderColumn='Folder', candidates=None, nRandomChecks=3, randomState=0):
+    """
+    Determine the local drive prefix by probing candidate roots against sampled folders.
+
+    Parameters
+    ----------
+    alldata : pandas.DataFrame
+        DataFrame containing a column with folder paths.
+    folderColumn : str, optional
+        Name of the column containing folder paths. Default is 'Folder'.
+    candidates : list[str] or None, optional
+        Candidate drive prefixes to test. If None, uses
+        ['/media/marcotti-lab', 'D:', 'E:', 'F:', 'Z:'] where Z: is fallback.
+    nRandomChecks : int, optional
+        Number of random folders to test for existence on each candidate drive.
+    randomState : int, optional
+        Random seed used for reproducible folder sampling.
+
+    Returns
+    -------
+    str
+        The first candidate drive prefix that matches all sampled folder paths.
+
+    Raises
+    ------
+    ValueError
+        If no valid folders are available in the selected column.
+    FileNotFoundError
+        If none of the candidate drives contain the sampled paths.
+    """
+    if candidates is None:
+        candidates = ['/media/marcotti-lab', 'D:', 'E:', 'F:', 'Z:']
+
+    if folderColumn not in alldata.columns:
+        raise ValueError(f"Column '{folderColumn}' not found in input DataFrame.")
+
+    folderSeries = alldata[folderColumn].dropna().astype(str)
+    if folderSeries.empty:
+        raise ValueError(f"No valid folder paths found in alldata['{folderColumn}'].")
+
+    nSamples = max(1, min(int(nRandomChecks), folderSeries.shape[0]))
+    sampledFolders = folderSeries.sample(n=nSamples, random_state=randomState).tolist()
+    relativePaths = [folder[2:].replace('\\', '/') for folder in sampledFolders]
+
+    testedPaths = []
+    for drive in candidates:
+        candidatePaths = [drive + relPath for relPath in relativePaths]
+        testedPaths.extend(candidatePaths)
+        if all(os.path.exists(path) for path in candidatePaths):
+            return drive
+
+    raise FileNotFoundError(
+        'Could not locate data in any candidate drive. Tested: ' + ', '.join(testedPaths)
+    )
+
 def loadRoisFromFile(filename):
     """
     Load ROIs (Regions of Interest) and their associated data from a NumPy file.
@@ -271,13 +327,13 @@ def fillMissingValues(dff0):
     dz = np.diff(dff0.iloc[:,0])
     keep = np.argwhere(dz!=0)[:,0]
     discard = np.argwhere(dz==0)[:,0]
-
+    dff02 = dff0.copy()
     for i in range(dff0.shape[1]):
         trace = dff0.values[:,i]
         size = 5
         for j in np.argwhere(np.diff(keep)!=1)[:,0]: #find the index where the gap between frames to keep is larger that 1
-        
-            try:            
+
+            try:
                 firstInterval = [keep[k] for k in np.arange(j-size+1,j+1)]
                 secondInterval = [keep[k] for k in np.arange(j+1,j+size+1)]
                 interval = firstInterval + secondInterval
@@ -289,11 +345,11 @@ def fillMissingValues(dff0):
                 f = interp1d(x,trace[interval],kind=1)
                 newx = np.arange(x[-1]+1)
                 newy = f(newx)
-                dff0.values[keep[j]:keep[j+1],i]=newy[size:-size]
+                dff02.iloc[keep[j]:keep[j+1],i]=newy[size:-size]
             except IndexError:
                 pass
 
-    return dff0	
+    return dff02	
 
 def getRawImage(sequence,n,width,height):
 	frameSize = width*height*2
