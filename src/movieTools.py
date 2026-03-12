@@ -537,6 +537,7 @@ from ipywidgets import interact, Dropdown
 import plotly.graph_objs as go
 import pandas as pd 
 import pyclesperanto_prototype as cle
+from IPython.display import display
 
 def isLeft(line, c):
     a = shapely.Point(line.coords[0])
@@ -642,6 +643,9 @@ def jupyterPy(tb):
 
     saveWavesButton = widgets.Button(description='Save wave detection',button_style = 'primary')
     loadWavesButton = widgets.Button(description='Load wave detection',button_style = 'primary')
+    removeWavesStartWidget = widgets.IntText(value=0,description='Start frm:',disabled=False)
+    removeWavesEndWidget = widgets.IntText(value=0,description='End frm:',disabled=False)
+    removeWavesButton = widgets.Button(description='Delete frame-range waves',button_style='warning')
 
     currentWaveWidget =  widgets.IntText(value=0,description='3D wave:',disabled=False)
     nextWaveButton =  widgets.Button(description='Next wave',button_style = 'primary')
@@ -663,8 +667,17 @@ def jupyterPy(tb):
     boxStack8 = widgets.VBox([squarifyButton,squareROISSideWidget])
 
     boxStack4 = widgets.VBox([subtractBackgroundButton,backgroundFrameWidget, subtract10BackgroundButton,subtract10FrameWidget , scaleSpaceButton, loadhclineButton,savehclineButton])
-    boxStack5 = widgets.VBox([spotSWidget,outlineSWidget, voronoiButton, resetLabelsButton,enlargeabelsButton, saveWavesButton, loadWavesButton])
-    boxStack6 = widgets.VBox([currentWaveWidget,prevWaveButton,nextWaveButton,currentPointWidget,nextPointButton,prevPointButton])
+    boxStack5 = widgets.VBox([
+        spotSWidget,
+        outlineSWidget,
+        voronoiButton,
+        resetLabelsButton,
+        enlargeabelsButton,
+        saveWavesButton,
+        loadWavesButton
+
+    ])
+    boxStack6 = widgets.VBox([currentWaveWidget,prevWaveButton,nextWaveButton,currentPointWidget,nextPointButton,prevPointButton,        removeWavesStartWidget,removeWavesEndWidget, removeWavesButton,])
     boxStack7 = widgets.VBox([loadKymoButton,saveKymoShapesButton,loadKymoShapesButton])
 
     #Fibres
@@ -1280,6 +1293,38 @@ def jupyterPy(tb):
                 labs[framesXChunk2*i:framesXChunk2*(i+1),:,:] = cle.merge_touching_labels(labs[framesXChunk2*i:framesXChunk2*(i+1),:,:])
             except:
                 labs[framesXChunk2*i:,:,:] = cle.merge_touching_labels(labs[framesXChunk2*i:,:,:])
+
+        # Optional spatial filter: remove only waves fully outside SelectedArea
+        if 'SelectedArea' in [layer.name for layer in tb.app.layers]:
+            selectedArea = tb.app.layers['SelectedArea'].data
+            selectedMask = None
+
+            # SelectedArea is interpreted as a spatial (Y, X) selection.
+            # If provided as 3D, collapse across time to a single spatial mask.
+            if selectedArea.ndim == 2:
+                if selectedArea.shape == labs.shape[1:]:
+                    selectedMask = selectedArea > 0
+                else:
+                    print('SelectedArea 2D shape does not match Wave3DRois spatial shape. Skipping SelectedArea filtering.')
+            elif selectedArea.ndim == 3:
+                if selectedArea.shape[1:] == labs.shape[1:]:
+                    selectedMask = np.any(selectedArea > 0, axis=0)
+                elif selectedArea.shape == labs.shape:
+                    selectedMask = np.any(selectedArea > 0, axis=0)
+                else:
+                    print('SelectedArea 3D shape does not match Wave3DRois spatial shape. Skipping SelectedArea filtering.')
+            else:
+                print('SelectedArea must be a 2D or 3D labels layer. Skipping SelectedArea filtering.')
+
+            if selectedMask is not None:
+                labelsInArea = np.unique(labs[:, selectedMask])
+                labelsInArea = labelsInArea[labelsInArea != 0]
+
+                if labelsInArea.size == 0:
+                    labs[:] = 0
+                else:
+                    keepMask = np.isin(labs, labelsInArea)
+                    labs[~keepMask] = 0
         
 
         try:
@@ -1287,7 +1332,7 @@ def jupyterPy(tb):
         except:
             tb.app.add_labels(labs, name = 'Wave3DRois')
         
-
+        
         props = measure.regionprops(labs)
         print('Found '+ str(len(props))+' Ca2+ waves')
         df = pd.DataFrame({
@@ -1499,6 +1544,36 @@ def jupyterPy(tb):
 
 
     loadWavesButton.on_click(on_loadWaves_clicked)
+
+    def on_removeWaves_clicked(change):
+        try:
+            waveLayer = tb.app.layers['Wave3DRois']
+        except KeyError:
+            print('No Wave3DRois layer present')
+            return
+
+        data = waveLayer.data.copy()
+        if data.ndim != 3:
+            print('Wave3DRois is expected to be a 3D labels layer')
+            return
+
+        startFrame = int(removeWavesStartWidget.value)
+        endFrame = int(removeWavesEndWidget.value)
+        if startFrame > endFrame:
+            startFrame, endFrame = endFrame, startFrame
+
+        startFrame = max(0, startFrame)
+        endFrame = min(data.shape[0] - 1, endFrame)
+
+        if startFrame > endFrame:
+            print('Selected frame range is outside the data bounds')
+            return
+
+        data[startFrame:endFrame+1, :, :] = 0
+        waveLayer.data = data
+        print(f'Removed Wave3DRois labels from frame {startFrame} to {endFrame}')
+
+    removeWavesButton.on_click(on_removeWaves_clicked)
 
     def on_next_wave_clicked(c):
         global globalprops
