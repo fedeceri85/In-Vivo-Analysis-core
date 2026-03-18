@@ -688,6 +688,7 @@ def jupyterPy(tb):
 
     topHatButton = widgets.Button(description='2 - Apply tophat',button_style = 'primary') 
     topHatRadius = widgets.IntText(value=10,description='Tophat radius:',disabled=False)
+    gaussSigmaFibresWidget = widgets.FloatText(value=0,description='Gauss sigma:',disabled=False)
     voronoiFibresButton =  widgets.Button(description='2-Voronoi-otsu segmentation',button_style = 'primary')
     spotSFibresWidget = widgets.IntText(value=7,description='Spot & out sigma:',disabled=False)
     segmentHCFibresButton =   widgets.Button(description='3-Create HCs labels',button_style = 'primary') 
@@ -700,7 +701,7 @@ def jupyterPy(tb):
     #topBox = widgets.HBox([boxStack,boxStack2,boxStack3,calculateShapesButton,boxStack4,boxStack5])
     topBox1 = widgets.HBox([widgets.VBox([plotButton,exportROIsbutton,areaLimitWidget]),boxStack2,boxStack8,boxStack3])
     topBox2 = widgets.HBox([boxStack4,boxStack5,boxStack6, boxStack7])
-    topBox3 = widgets.HBox([widgets.VBox([topHatRadius,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget]),\
+    topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget]),\
                             widgets.VBox([segmentHCFibresButton,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton]),\
                               widgets.VBox([plotFibresButton,exportROIsFibresButton,exportAnnotationsFibresButton]),           
                             loadAnnotationsButton        ])
@@ -1684,9 +1685,12 @@ def jupyterPy(tb):
 
      # FIBRES CALLBACKS
     from skimage import morphology
+    from skimage.filters import gaussian
     
     def on_tophat_clicked(click):
         img = tb.app.layers['Avg'].data
+        if gaussSigmaFibresWidget.value != 0:
+            img = gaussian(img, sigma=gaussSigmaFibresWidget.value, preserve_range=True)
         blobs = morphology.white_tophat(img,morphology.disk(topHatRadius.value))
         try:
             l=tb.app.layers['TophatFilter']
