@@ -1730,6 +1730,9 @@ def jupyterPy(tb):
         
         # reset label number
         mask = measure.label(bb)
+     
+        #Erode labels by 1 pixel
+        mask = pyp.pull(pyp.erode_labels(mask))
 
         #sort masks from left to right
         props = measure.regionprops(mask)
