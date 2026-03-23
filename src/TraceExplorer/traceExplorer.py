@@ -759,7 +759,16 @@ class mainWindow(pg.GraphicsView):
                 xpeak = xpeak[(xpeak >= 0) & (xpeak < trace.shape[0])]
 
                 if self.p['Peaks']:
-                    sp = pg.ScatterPlotItem(x[xpeak],trace[xpeak],name=str(self.currentIds[i])+'_peaks',hoverable=True,hoversize=20)
+                    sp = pg.ScatterPlotItem(
+                        x[xpeak],
+                        trace[xpeak],
+                        name=str(self.currentIds[i])+'_peaks',
+                        hoverable=True,
+                        hoversize=20,
+                        size=12,
+                        pen=pg.mkPen((255, 0, 0, 255)),
+                        brush=pg.mkBrush((255, 0, 0, 128))
+                    )
                     sp.sigClicked.connect(self.mouseClickEvent)
 
                     self.plot.addItem(sp)
@@ -823,7 +832,16 @@ class mainWindow(pg.GraphicsView):
                 xpeak = xpeak[(xpeak >= 0) & (xpeak < trace.shape[0])]
 
                 if self.p['Peaks']:
-                    sp = pg.ScatterPlotItem(x[xpeak],trace[xpeak],name=str(self.currentIds[i])+'_peaks',hoverable=True,hoversize=20)
+                    sp = pg.ScatterPlotItem(
+                        x[xpeak],
+                        trace[xpeak],
+                        name=str(self.currentIds[i])+'_peaks',
+                        hoverable=True,
+                        hoversize=20,
+                        size=10,
+                        pen=pg.mkPen((255, 0, 0, 153)),
+                        brush=pg.mkBrush((255, 0, 0, 153))
+                    )
                     sp.sigClicked.connect(self.mouseClickEvent)
                     self.plot.addItem(sp)
 
