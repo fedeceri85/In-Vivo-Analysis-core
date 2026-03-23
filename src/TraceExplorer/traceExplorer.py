@@ -41,86 +41,14 @@ import ast
 from scipy.signal import find_peaks,peak_widths, savgol_filter
 import shapely
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from traceUtilities import rollingMedianCorrection
+from traceUtilities import rollingMedianCorrection, detrend_z_score
 pg.setConfigOptions(antialias=True)
 pg.setConfigOption('background', 'w')
 pg.setConfigOption('foreground', 'k')
 
 COLORS = ['k','b','r','g','orange','y','cyan']
 
-def mad_zscore(trace, min_flat_run=2, flat_eps=1e-12, guard_frames=0, fill_unsafe=0.0, return_safe_mask=False):
-    """
-    MAD z-score using only "safe" frames for robust stats.
-    Safe frames exclude non-finite samples and repeated/constant-frame runs.
-    Parameters assume input shape (time, cells) or (time,).
-    """
-    arr = np.asarray(trace, dtype=float)
-    was_1d = arr.ndim == 1
-    if was_1d:
-        arr = arr[:, None]
 
-    n_time, n_cells = arr.shape
-    z = np.zeros_like(arr, dtype=float)
-    safe_mask = np.ones_like(arr, dtype=bool)
-
-    for j in range(n_cells):
-        x = arr[:, j]
-        invalid = ~np.isfinite(x)
-
-        # Detect constant runs from first-difference domain
-        d = np.abs(np.diff(x))
-        const = d <= flat_eps
-
-        run_start = None
-        for i, is_const in enumerate(const):
-            if is_const and run_start is None:
-                run_start = i
-            elif (not is_const) and run_start is not None:
-                run_end = i - 1
-                run_len_samples = (run_end - run_start + 1) + 1
-                if run_len_samples >= min_flat_run:
-                    invalid[run_start:run_end + 2] = True
-                run_start = None
-        if run_start is not None:
-            run_end = len(const) - 1
-            run_len_samples = (run_end - run_start + 1) + 1
-            if run_len_samples >= min_flat_run:
-                invalid[run_start:run_end + 2] = True
-
-        if guard_frames > 0 and invalid.any():
-            bad = np.where(invalid)[0]
-            for b in bad:
-                lo = max(0, b - guard_frames)
-                hi = min(n_time, b + guard_frames + 1)
-                invalid[lo:hi] = True
-
-        safe = ~invalid
-        if safe.sum() < 3:
-            safe = np.isfinite(x)
-
-        if safe.sum() == 0:
-            z[:, j] = fill_unsafe
-            safe_mask[:, j] = False
-            continue
-
-        med = np.median(x[safe])
-        mad = np.median(np.abs(x[safe] - med))
-        scale = 1.4826 * mad
-        if scale < 1e-10:
-            scale = np.std(x[safe]) + 1e-10
-
-        zj = (x - med) / scale
-        zj[~safe] = fill_unsafe
-        z[:, j] = zj
-        safe_mask[:, j] = safe
-
-    if was_1d:
-        z = z[:, 0]
-        safe_mask = safe_mask[:, 0]
-
-    if return_safe_mask:
-        return z, safe_mask
-    return z
 
 def normalize_peak_positions(value):
     """Convert peak position cell value into a clean list[int]."""
@@ -527,9 +455,7 @@ class mainWindow(pg.GraphicsView):
             # Optionally normalize per-cell before peak detection
             if use_zscore:
                 # Remove slow drift before computing MAD so drifty traces don't inflate the noise estimate
-                corrected = rollingMedianCorrection(dff0, rollingN=2000)
-                detect_trace = mad_zscore(corrected)
-                detect_trace = savgol_filter(detect_trace,21, 1)
+                detect_trace = detrend_z_score(dff0, rollingN=2000, savgol_order=21)
 
             else:
                 detect_trace = dff0
@@ -765,7 +691,7 @@ class mainWindow(pg.GraphicsView):
                         name=str(self.currentIds[i])+'_peaks',
                         hoverable=True,
                         hoversize=20,
-                        size=12,
+                        size=9,
                         pen=pg.mkPen((255, 0, 0, 255)),
                         brush=pg.mkBrush((255, 0, 0, 128))
                     )
@@ -838,7 +764,7 @@ class mainWindow(pg.GraphicsView):
                         name=str(self.currentIds[i])+'_peaks',
                         hoverable=True,
                         hoversize=20,
-                        size=10,
+                        size=9,
                         pen=pg.mkPen((255, 0, 0, 153)),
                         brush=pg.mkBrush((255, 0, 0, 153))
                     )
