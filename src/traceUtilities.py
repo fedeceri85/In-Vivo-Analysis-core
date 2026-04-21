@@ -156,7 +156,7 @@ def stackedPlot(traces):
         out[:,i] = traces[:,i] + np.nanmax(out[:,i-1])
     return out
 
-def rollingMedianCorrection(traces,rollingN = 1000):
+def rollingMedianCorrection(traces,rollingN = 1000,quantile = 0.5):
     """
     Remove slow drifts in calcium traces by subtracting the rolling median.
     This function calculates and subtracts the rolling median from calcium traces to remove slow
@@ -180,7 +180,7 @@ def rollingMedianCorrection(traces,rollingN = 1000):
     """
 
     traces2 = pd.DataFrame(traces)
-    traces2 = traces2 - traces2.rolling(rollingN,min_periods=0).median()
+    traces2 = traces2 - traces2.rolling(rollingN,min_periods=0).quantile(quantile).shift(1).bfill()
     if traces.ndim ==2:
         traces2 = traces2.values #+ traces[:5,:].mean(0)
         return traces2
