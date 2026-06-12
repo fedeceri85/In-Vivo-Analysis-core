@@ -1427,6 +1427,9 @@ class JumpFramesFinderPanel:
         workingFolder = self._resolve_folder(el)
         outFolder = os.path.join(workingFolder, savefolder, '1-jumpCorrected-mc.tif')
         self.tb.loadFromTiff(outFolder)
+
+        if os.path.exists(os.path.join(workingFolder, savefolder, '1-jumpCorrected-channel2-mc.tif')):
+            self.tb.loadFromTiff(os.path.join(workingFolder, savefolder, '1-jumpCorrected-channel2-mc.tif'), title='Image channel 2')
         self._remove_layers('Masks', 'Avg', 'Annotations')
 
     def _on_prev(self, event):
