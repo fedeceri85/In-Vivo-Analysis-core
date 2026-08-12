@@ -116,7 +116,7 @@ def loadRoisFromFile(filename):
         return roboRois, roiprofile, times
         
 		
-def calculatedFF0(traces,f0Frames = [0,5]):
+def calculatedFF0(traces,f0Frames = [0,5],percentile =5):
     """
     Calculates ΔF/F0 (delta F / F0) for fluorescence traces.
     Parameters
@@ -125,8 +125,10 @@ def calculatedFF0(traces,f0Frames = [0,5]):
         2D array of fluorescence traces where rows are time points and columns are ROIs/cells
     f0Frames : list or str, optional
         If list: [start_frame, end_frame] defining window for F0 calculation
-        If 'percentile': uses 5th percentile of entire trace as F0
+        If 'percentile': uses specified percentile of entire trace as F0
         Default is [0,5]
+    percentile : int, optional
+        Percentile to use when f0Frames is 'percentile'. Default is 5.
     Returns
     -------
     numpy.ndarray
@@ -138,7 +140,7 @@ def calculatedFF0(traces,f0Frames = [0,5]):
     - F0 is either mean of specified frames or 5th percentile of trace
     """
     if f0Frames == 'percentile':
-        f0 = np.nanpercentile(traces,5,axis=0)
+        f0 = np.nanpercentile(traces,percentile,axis=0)
     else:
         f0 = np.nanmean(traces[f0Frames[0]:f0Frames[1],:],0)
     

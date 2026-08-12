@@ -48,23 +48,6 @@ Processed parameter files are saved in the `parameters` directory with correspon
 
 The main processing pipeline is implemented in `batchMotionCorrect.ipynb`. Configure the `fileHeader` variable to specify which experiment types to process.
 
-## Requirements
-
-Required Python packages:
-- numpy
-- pandas
-- scipy
-- matplotlib
-- caiman
-- tifffile
-- jupyter
-- napari
-- scikit-image
-- xlrd
-- openpyxl
-- PyQt5
-- pyqtgraph
-- ipywidgets
 
 ## Data Organization
 

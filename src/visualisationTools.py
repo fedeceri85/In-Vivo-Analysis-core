@@ -892,12 +892,12 @@ class JumpFramesFinderPanel:
         self.xw             = pn.widgets.IntInput(name='Trace #',      value=0,  start=0, end=self._ntraces, step=1)
         self.smoothOrderInt = pn.widgets.IntInput(name='Smooth. ord.', value=11, start=1, end=31,       step=2)
 
-        self.xwLeft         = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=50,  step=1)
-        self.xwRight        = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=50,  step=1)
+        self.xwLeft         = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=150,  step=1)
+        self.xwRight        = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=150,  step=1)
         self.xwMinimaOrder  = pn.widgets.IntInput(name='Order',     value=50, start=0, end=400, step=1)
 
-        self.xwMaxLeft      = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=50,  step=1)
-        self.xwMaxRight     = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=50,  step=1)
+        self.xwMaxLeft      = pn.widgets.IntInput(name='Left win',  value=0,  start=0, end=150,  step=1)
+        self.xwMaxRight     = pn.widgets.IntInput(name='Right win', value=0,  start=0, end=150,  step=1)
         self.xwMaximaOrder  = pn.widgets.IntInput(name='Order',     value=50, start=0, end=400, step=1)
 
         self.xwUpdateRate     = pn.widgets.IntInput(name='Update interval',   value=4,  start=1,  end=15,   step=1)
@@ -1684,3 +1684,11 @@ def simpleTracePlotter(alltraces,xScaleFactor = 1, xlabel = 'Time (s)',showCorre
         
     out = widgets.interactive_output(f, {'x': xw,'x2':xw2})
     display(ui,out)
+
+from monai.visualize import blend_images
+def blend_images_with_masks(image,labels,cmap='gist_ncar',alpha=0.3):
+    '''
+    Blend an image with its corresponding label mask using a specified colormap and alpha value.
+    '''
+    overlay = blend_images(image.reshape(1, *image.shape), labels.reshape(1, *labels.shape), alpha=alpha,cmap=cmap)
+    return overlay.swapaxes(0, 2).swapaxes(0, 1)

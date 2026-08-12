@@ -1,0 +1,54 @@
+# Core scientific stack
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+tifffile
+scikit-image
+Pillow
+shapely
+tqdm
+joblib
+zarr
+pystackreg
+dask
+dask-image
+
+# Interactive notebooks and GUI tools
+jupyter
+ipython
+ipywidgets
+napari
+PyQt5
+pyqtgraph
+plotly
+panel
+bokeh
+
+# Bioimaging, signal analysis, and machine learning
+cellpose
+pyclesperanto-prototype
+mass-ts
+monai
+opencv-python
+ruamel.yaml
+openpyxl
+
+
+# Optional / environment-specific dependencies:
+#
+# CuPy is optional in src/movieTools.py and used directly by some notebooks.
+# Choose the build that matches the local CUDA/runtime setup, for example:
+#   cupy-cuda12x
+# See: https://docs.cupy.dev/en/stable/install.html
+#
+# CaImAn is used by the CaImAn motion-correction notebook. Do not add the
+# package name "caiman" here: the PyPI package with that name is unrelated to
+# Flatiron Institute CaImAn. Install Flatiron CaImAn with conda/mamba, e.g.:
+#   mamba create -n caiman -c conda-forge caiman
+# See: https://github.com/flatironinstitute/CaImAn
+#
+# cascade2p is imported by the Cascade deconvolution notebook from an external
+# Cascade/CascadeTorch checkout, not from a standard PyPI dependency.
+# See: https://github.com/HelmchenLabSoftware/Cascade

@@ -54,8 +54,10 @@ def normalize_peak_positions(value):
     """Convert peak position cell value into a clean list[int]."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return []
+    
 
     if isinstance(value, str):
+        value = value.replace('np.int64', '').replace('(', '').replace(')', '').replace('np.int32', '')
         text = value.strip()
         if text == '' or text.lower() in ['nan', 'none']:
             return []
@@ -189,6 +191,7 @@ class mainWindow(pg.GraphicsView):
         self.plot.scene().sigMouseClicked.connect(self.mouseClickEventLine)
         self.allCorrTraces = None
         self.colorsDict = {}
+        self._programmatic_file_update = False
 
 
         # #self.plot.addItem(self.cursorlabel)
@@ -216,7 +219,8 @@ class mainWindow(pg.GraphicsView):
             {'name':'Peaks','type':'bool','value':True},
             {'name':'File','type':'text','value':''},
             {'name':'Show peak half width','type':'bool','value':False},
-            {'name':'Peak group','type':'list','values':['Peak positions','Peak positions hq']},
+            #{'name':'Peak group','type':'list','values':['Peak positions','Peak positions hq']},
+            {'name':'Peak group','type':'list','limits':['Peak positions','Peak positions hq'], 'value':'Peak positions'}
             #{'name':'Group 1','type':'list','values':[1,3,5,6,9,12]},
             #{'name':'Prev mouse','type':'action'},
             ]
@@ -256,6 +260,7 @@ class mainWindow(pg.GraphicsView):
         self.p.keys()['Hue group'].sigValueChanged.connect(self.changeGroupsCb)
         self.p.keys()['Group 1 select'].sigValueChanged.connect(self.changeGroup1Cb)
         self.p.keys()['Cell types'].sigValueChanged.connect(self.changeCellType)
+        self.p.keys()['File'].sigValueChanged.connect(self.changeFileCb)
         self.p.keys()['Show peak half width'].sigValueChanged.connect(self.plotCb)
         
         self.p2.keys()['Initial guess of peaks'].sigActivated.connect(self.on_guessButton_clicked)
@@ -266,6 +271,34 @@ class mainWindow(pg.GraphicsView):
         self.show()
         self.t.show()
         self.t2.show()
+
+    def setFileValue(self, value):
+        self._programmatic_file_update = True
+        try:
+            self.p.keys()['File'].setValue(str(value))
+        finally:
+            self._programmatic_file_update = False
+
+    def changeFileCb(self, *args):
+        if self._programmatic_file_update or self.p['Group 1'] != 'Folder':
+            return
+        if not hasattr(self, 'master') or self.master is None or self.master.shape[0] == 0:
+            return
+        if not hasattr(self, 'group1List') or len(self.group1List) == 0:
+            return
+
+        file_value = str(self.p['File']).strip()
+        if file_value == '':
+            return
+
+        for index, group_value in enumerate(self.group1List):
+            group_text = str(group_value).strip()
+            group_path = os.path.normcase(os.path.normpath(group_text))
+            file_path = os.path.normcase(os.path.normpath(file_value))
+            if group_text == file_value or group_path == file_path:
+                self.p.keys()['Group 1 select'].setValue(index)
+                self.plotCb()
+                return
 
     def modifyPointsCb(self):
         if (self.p2['Delete points']) or (self.p2['Add points']):
@@ -699,12 +732,16 @@ class mainWindow(pg.GraphicsView):
 
                     self.plot.addItem(sp)
                     if self.p['Show peak half width']:
-                        results_full = peak_widths(trace,xpeak,rel_height=0.5)
+                        import sys
+                        sys.path.append('../')
+                        import traceUtilities as tu
+                        trace_z = tu.detrend_z_score(trace, rollingN=2000, savgol_order=21)
+                        results_full = peak_widths(trace_z,xpeak,rel_height=0.5)
                         sp2 = pg.ScatterPlotItem(x[results_full[2].astype(int)],trace[results_full[2].astype(int)],hoverable=True,hoversize=20,symbol='+')
                         sp3 = pg.ScatterPlotItem(x[results_full[3].astype(int)],trace[results_full[3].astype(int)],hoverable=True,hoversize=20,symbol='t')
                         self.plot.addItem(sp2)       
                         self.plot.addItem(sp3)        
-            self.p.keys()['File'].setValue(self.el['Folder'].values[0])
+            self.setFileValue(self.el['Folder'].values[0])
         else:
             self.el = self.master.loc[(self.master[self.p['Group 1']]==self.group1List[group1Index]) & (self.master[self.p['Group 2']]==self.group2List[group2Index-1])& (self.master['Cell type'].isin(self.celltypes))]
             self.currentIds = self.el[self.p['Cell ID column']].values
@@ -781,9 +818,9 @@ class mainWindow(pg.GraphicsView):
                         self.plot.addItem(sp3)    
 
             try:
-                self.p.keys()['File'].setValue(str(self.group2List[group2Index-1].values[0]))
+                self.setFileValue(self.group2List[group2Index-1].values[0])
             except AttributeError:
-                self.p.keys()['File'].setValue(str(self.group2List[group2Index-1]))
+                self.setFileValue(self.group2List[group2Index-1])
 
     def changeGroupsCb(self):
         if self.master is None or self.master.shape[0] == 0:

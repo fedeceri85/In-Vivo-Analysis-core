@@ -4,10 +4,16 @@ This file provides utilities for processing and analyzing calcium imaging micros
 """
 
 import os
-from cupyx.scipy.ndimage import gaussian_filter
 
+try:
+    from cupyx.scipy.ndimage import gaussian_filter
+    import cupy as cp
+except ImportError:
+    print("CuPy is not installed. GPU acceleration will not be available.")
+    cp = None
+    gaussian_filter = None
 import numpy as np
-import cupy as cp
+
 from os.path import getsize
 import napari
 from skimage.io import imread
