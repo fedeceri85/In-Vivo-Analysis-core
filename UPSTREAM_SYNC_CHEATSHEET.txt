@@ -14,7 +14,7 @@ Weekly sync (safe)
 If step 4 fails (branches diverged)
 1) git checkout -b integrate/upstream-YYYY-MM-DD main
 2) git merge upstream/main
-3) Resolve conflicts
+3) Resolve conflicts. Use nbdime for notebooks.
 4) git add -A
 5) git commit -m "Merge upstream/main"
 6) git push -u origin integrate/upstream-YYYY-MM-DD
@@ -34,6 +34,12 @@ Update your branch with upstream branch changes later
 
 Keep remotes clean
 1) git fetch --all --prune
+
+
+nbdime
+- pip install nbdime
+- nbdime config-git --enable
+- git mergetool path/to/notebook.ipynb
 
 Notes
 - origin = your GitHub repo
