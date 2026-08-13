@@ -2,3 +2,7 @@
 .venv
 *alltraces*
 *allCorrTraces*
+
+# Local ML model downloads
+models/
+src/ml_models/**/pretrained/
