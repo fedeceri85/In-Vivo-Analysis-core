@@ -25,6 +25,7 @@ pyqtgraph
 plotly
 panel
 bokeh
+jupyter_bokeh
 
 # Bioimaging, signal analysis, and machine learning
 cellpose

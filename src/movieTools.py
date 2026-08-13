@@ -622,6 +622,15 @@ def jupyterPy(tb):
     saveROIsbutton =  widgets.Button(description='Save labels',button_style = 'success')
     loadROIsbutton =  widgets.Button(description='Load labels',button_style = 'primary')
     cellprobSlider = widgets.FloatSlider(description='Cell prob',min=-8,max=8, value = 0,step = 0.1)
+    hcSegmentationModelDropdown = widgets.Dropdown(
+        options=[
+            ('Cellpose', 'cellpose'),
+            ('IHC model', 'ml_model'),
+        ],
+        value='cellpose',
+        description='HC model:',
+        disabled=False
+    )
 
     classifyButton = widgets.Button(description='Annotate ROIs',button_style = 'primary')
     radiusWidget = widgets.IntText(value=100,description='Cell radius:',disabled=False)
@@ -668,7 +677,7 @@ def jupyterPy(tb):
     boxStack  = widgets.VBox([layersDropdown,justAvgButton, avgLimitLeft, avgLimitRight])
 
 
-    boxStack2  = widgets.VBox([avgButton,erodeButton,classifyButton,radiusWidget,cellprobSlider])
+    boxStack2  = widgets.VBox([avgButton,hcSegmentationModelDropdown,erodeButton,classifyButton,radiusWidget,cellprobSlider])
     boxStack3 = widgets.VBox([saveROIsbutton,loadROIsbutton])
     boxStack8 = widgets.VBox([squarifyButton,squareROISSideWidget])
 
@@ -698,6 +707,15 @@ def jupyterPy(tb):
     voronoiFibresButton =  widgets.Button(description='2-Voronoi-otsu segmentation',button_style = 'primary')
     spotSFibresWidget = widgets.IntText(value=7,description='Spot & out sigma:',disabled=False)
     segmentHCFibresButton =   widgets.Button(description='3-Create HCs labels',button_style = 'primary') 
+    hcFibresSegmentationModelDropdown = widgets.Dropdown(
+        options=[
+            ('Cellpose', 'cellpose'),
+            ('New model', 'ml_model'),
+        ],
+        value='cellpose',
+        description='HC model:',
+        disabled=False
+    )
     radiusFbiresWidget = widgets.IntText(value=70,description='Cell radius:',disabled=False)
     annotateFibresButton = widgets.Button(description='4-Annotate fibres',button_style = 'primary') 
     assignFibresButton = widgets.Button(description='5-Pair boutons-hcs',button_style = 'primary') 
@@ -708,7 +726,7 @@ def jupyterPy(tb):
     topBox1 = widgets.HBox([widgets.VBox([plotButton,exportROIsbutton,areaLimitWidget]),boxStack2,boxStack8,boxStack3])
     topBox2 = widgets.HBox([boxStack4,boxStack5,boxStack6, boxStack7])
     topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget]),\
-                            widgets.VBox([segmentHCFibresButton,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton]),\
+                            widgets.VBox([segmentHCFibresButton,hcFibresSegmentationModelDropdown,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton]),\
                               widgets.VBox([plotFibresButton,exportROIsFibresButton,exportAnnotationsFibresButton]),           
                             loadAnnotationsButton        ])
     
@@ -867,6 +885,17 @@ def jupyterPy(tb):
             tb.app.add_image(arr,name='Avg')
     justAvgButton.on_click(on_justAvgButton_clicked)
 
+    def _predict_hc_labels_with_ml_model(arr, radius):
+        try:
+            from ml_models.ihc_segmentation import predict_labels
+        except ModuleNotFoundError as exc:
+            if exc.name != 'ml_models':
+                raise
+            from src.ml_models.ihc_segmentation import predict_labels
+
+        min_size = int(radius * radius * 3.14 / 2)
+        return predict_labels(arr, min_size=min_size)
+
     def on_avgButton_clciked(change):
 
         arr = tb.app.layers[layersDropdown.value].data[avgLimitLeft.value:avgLimitRight.value,:,:].mean(0)
@@ -876,28 +905,32 @@ def jupyterPy(tb):
             l.data = arr
         except:
             tb.app.add_image(arr,name='Avg')
-        model = models.CellposeModel(gpu=True, model_type='cyto')
 
-        masks, flows, styles = model.eval(arr, diameter=radiusWidget.value, channels=[0,0],cellprob_threshold = cellprobSlider.value,
-                                                 flow_threshold=0)
+        if hcSegmentationModelDropdown.value == 'cellpose':
+            model = models.CellposeModel(gpu=True, model_type='cyto')
 
-        #sort masks from left to right
-        props = measure.regionprops(masks)
-        
-        masks2 = masks.copy()
-        #remove small rois
-        for c in props:
-            if c.area<areaLimitWidget.value:
-                masks2[masks==c.label] = 0
+            masks, flows, styles = model.eval(arr, diameter=radiusWidget.value, channels=[0,0],cellprob_threshold = cellprobSlider.value,
+                                                     flow_threshold=0)
 
-        props = measure.regionprops(masks2)
-        orderedLabels = np.argsort([c.centroid[1] for c in props])+1
-        masks3 = masks2.copy()
-        for i,el in enumerate(orderedLabels):
+            #sort masks from left to right
+            props = measure.regionprops(masks)
+            
+            masks2 = masks.copy()
+            #remove small rois
+            for c in props:
+                if c.area<areaLimitWidget.value:
+                    masks2[masks==c.label] = 0
 
-           masks3[masks2==el] = i+1
+            props = measure.regionprops(masks2)
+            orderedLabels = np.argsort([c.centroid[1] for c in props])+1
+            masks3 = masks2.copy()
+            for i,el in enumerate(orderedLabels):
 
-        masks = masks3
+               masks3[masks2==el] = i+1
+
+            masks = masks3
+        else:
+            masks = _predict_hc_labels_with_ml_model(arr, radiusWidget.value)
         
 
 
@@ -1796,28 +1829,31 @@ def jupyterPy(tb):
             - If 'Masks' layer exists, updates it; if not, creates new layer
         """
         arr = tb.app.layers['Avg'].data
-        #model = models.Cellpose(gpu=False, model_type='cyto2')
-        model = models.CellposeModel(pretrained_model='./cellposemodels/hcFibremodel')
-        masks, flows, styles = model.eval(arr, diameter=radiusFbiresWidget.value, channels=[0,0], net_avg=True,cellprob_threshold = 0.0,
-                                                 flow_threshold=27.0,resample=False)  
-        
-        #sort masks from left to right
-        props = measure.regionprops(masks)
-        
-        masks2 = masks.copy()
-        #remove small rois
-        for c in props:
-            if c.area<750:
-                masks2[masks==c.label] = 0
+        if hcFibresSegmentationModelDropdown.value == 'cellpose':
+            #model = models.Cellpose(gpu=False, model_type='cyto2')
+            model = models.CellposeModel(pretrained_model='./cellposemodels/hcFibremodel')
+            masks, flows, styles = model.eval(arr, diameter=radiusFbiresWidget.value, channels=[0,0], net_avg=True,cellprob_threshold = 0.0,
+                                                     flow_threshold=27.0,resample=False)  
+            
+            #sort masks from left to right
+            props = measure.regionprops(masks)
+            
+            masks2 = masks.copy()
+            #remove small rois
+            for c in props:
+                if c.area<750:
+                    masks2[masks==c.label] = 0
 
-        props = measure.regionprops(masks2)
-        orderedLabels = np.argsort([c.centroid[1] for c in props])+1
-        masks3 = masks2.copy()
-        for i,el in enumerate(orderedLabels):
+            props = measure.regionprops(masks2)
+            orderedLabels = np.argsort([c.centroid[1] for c in props])+1
+            masks3 = masks2.copy()
+            for i,el in enumerate(orderedLabels):
 
-           masks3[masks2==el] = i+1
+               masks3[masks2==el] = i+1
 
-        masks = masks3
+            masks = masks3
+        else:
+            masks = _predict_hc_labels_with_ml_model(arr, radiusFbiresWidget.value)
 
         try:
             l=tb.app.layers['Masks']
@@ -2437,4 +2473,3 @@ def maskMatching(master,onlyIHCs = True):
     out = widgets.interactive_output(f, {'x': xw,'shift1':xshift1,'shift2':xshift2,'shift3':xshift3,'shift4':xshift4,'shift5':xshift5,'shift6':xshift6,'shift7':xshift7})
     
     display(ui,out)
-

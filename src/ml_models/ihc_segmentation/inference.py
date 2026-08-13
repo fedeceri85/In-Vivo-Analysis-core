@@ -116,6 +116,40 @@ def _normalise_state_dict_keys(state_dict):
     }
 
 
+def _prepare_image(image):
+    import numpy as np
+    import torch
+
+    if torch.is_tensor(image):
+        tensor = image.detach().clone()
+    else:
+        tensor = torch.as_tensor(np.asarray(image))
+
+    tensor = tensor.float()
+
+    if tensor.ndim == 2:
+        tensor = tensor.unsqueeze(0).unsqueeze(0)
+    elif tensor.ndim == 3:
+        if tensor.shape[0] == 1:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.shape[-1] == 1:
+            tensor = tensor.permute(2, 0, 1).unsqueeze(0)
+        else:
+            tensor = tensor.unsqueeze(1)
+    elif tensor.ndim != 4:
+        raise ValueError(
+            "Expected image with shape (H, W), (C, H, W), (N, H, W), "
+            f"or (N, C, H, W); got {tuple(tensor.shape)}"
+        )
+
+    min_value = tensor.min()
+    max_value = tensor.max()
+    if max_value > min_value:
+        tensor = (tensor - min_value) / (max_value - min_value)
+
+    return tensor
+
+
 def load_segmentation_model():
     import torch
 
@@ -152,14 +186,8 @@ def predict_binary(model, image, device, roi_size, sw_batch_size,
     ])
 
     model.eval()
-    #move the image to a torch tensor if it is not already. Ensure that it is Batch, Channel, Height, Width (BCHW) format. If the image is 2D, add a channel dimension. If it is 3D, add a batch dimension.
-    image = image.copy()
-    if image.ndim == 2:
-        image = image[None, None, :, :]
-    elif image.ndim == 3:
-        image = image[None, :, :, :]
-    if not isinstance(image, torch.Tensor):
-        image = torch.tensor(image, dtype=torch.float32)
+    image = _prepare_image(image)
+
     with torch.no_grad():
 
         output = sliding_window_inference(

@@ -69,7 +69,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
     xwTemplateSlider =  widgets.IntSlider(min=0,max=1000,step=1,value=0,continuous_update=False,description='Template strength')
     lbl3 = widgets.Label('Template search',layout= widgets.Layout(display="flex", justify_content="center"))
     pbar = widgets.IntProgress(min=0,max=1,bar_style='success',description='Progress')
-    ddMenu =  widgets.Dropdown(options=['Z', 'C', 'D','E','F','/media/marcotti-lab'], value='Z', description='Drive:', disabled=False)
+    ddMenu =  widgets.Dropdown(options=['Z', 'C', 'D','E','F','/media/marcotti-lab','/Volumes/Data'], value='Z', description='Drive:', disabled=False)
     
 
     prevButton =  widgets.Button(description='<',button_style = 'primary')
@@ -903,7 +903,7 @@ class JumpFramesFinderPanel:
         self.xwUpdateRate     = pn.widgets.IntInput(name='Update interval',   value=4,  start=1,  end=15,   step=1)
         self.xwTemplateSlider = pn.widgets.IntInput(name='Template strength', value=0,  start=0,  end=1000, step=1)
 
-        self.ddMenu = pn.widgets.Select(name='Drive', options=['Z', 'C', 'D', 'E', 'F', '/media/marcotti-lab'], value='Z')
+        self.ddMenu = pn.widgets.Select(name='Drive', options=['Z', 'C', 'D', 'E', 'F', '/media/marcotti-lab','/Volumes/Data'], value='Z')
 
         self.prevButton  = pn.widgets.Button(name='<',    button_type='primary', width=50)
         self.nextButton  = pn.widgets.Button(name='>',    button_type='primary', width=50)
