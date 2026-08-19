@@ -213,9 +213,8 @@ def binary_to_instance_labels(binary_mask, min_size=20, min_distance=5):
     # 1. Ensure boolean mask
     mask = binary_mask > 0
 
+    # 2. Optional cleanup
     mask = closing(mask, footprint=np.ones((4, 4)))
-        # # 2. Optional cleanup
-        # mask = remove_small_objects(mask, min_size=min_size)
 
     # 3. Distance transform: high values near object centers
     distance = ndi.distance_transform_edt(mask)

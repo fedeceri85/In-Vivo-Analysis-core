@@ -4,6 +4,7 @@ This file provides utilities for processing and analyzing calcium imaging micros
 """
 
 import os
+from importlib import import_module
 
 try:
     from cupyx.scipy.ndimage import gaussian_filter
@@ -42,6 +43,31 @@ previewFilename2 = 'ChanA_Preview.tif' #New microscope. It is channel A
 savefolder = 'processedMovies'
 
 MAXCHUNKSIZE = 1024*288*2*6000 # MAX MEMORY ALLOWED IN GRAPHICS CARD. WARNING! IT IS PC DEPENDENT. Main server (16GB GPU) is 786432000
+
+ML_SEGMENTATION_MODELS = {
+    'ml_model': 'ml_models.ihc_segmentation',
+    'ml_model_fibres': 'ml_models.ihc_segmentation_fibres',
+}
+
+
+def _load_ml_segmentation_module(model_key):
+    try:
+        module_path = ML_SEGMENTATION_MODELS[model_key]
+    except KeyError as exc:
+        raise ValueError(f"Unknown HC segmentation model: {model_key}") from exc
+
+    try:
+        return import_module(module_path)
+    except ModuleNotFoundError as exc:
+        if exc.name != 'ml_models':
+            raise
+        return import_module(f"src.{module_path}")
+
+
+def _predict_hc_labels_with_ml_model(arr, radius, model_key):
+    model_module = _load_ml_segmentation_module(model_key)
+    min_size = None#int(radius * radius * 3.14 / 2)
+    return model_module.predict_labels(arr, min_size=min_size)
 
 
 def read_tiff_stack(filepath: str) -> np.ndarray:
@@ -710,7 +736,8 @@ def jupyterPy(tb):
     hcFibresSegmentationModelDropdown = widgets.Dropdown(
         options=[
             ('Cellpose', 'cellpose'),
-            ('New model', 'ml_model'),
+            ('IHC model', 'ml_model'),
+            ('IHC fibres model', 'ml_model_fibres'),
         ],
         value='cellpose',
         description='HC model:',
@@ -885,17 +912,6 @@ def jupyterPy(tb):
             tb.app.add_image(arr,name='Avg')
     justAvgButton.on_click(on_justAvgButton_clicked)
 
-    def _predict_hc_labels_with_ml_model(arr, radius):
-        try:
-            from ml_models.ihc_segmentation import predict_labels
-        except ModuleNotFoundError as exc:
-            if exc.name != 'ml_models':
-                raise
-            from src.ml_models.ihc_segmentation import predict_labels
-
-        min_size = int(radius * radius * 3.14 / 2)
-        return predict_labels(arr, min_size=min_size)
-
     def on_avgButton_clciked(change):
 
         arr = tb.app.layers[layersDropdown.value].data[avgLimitLeft.value:avgLimitRight.value,:,:].mean(0)
@@ -930,7 +946,11 @@ def jupyterPy(tb):
 
             masks = masks3
         else:
-            masks = _predict_hc_labels_with_ml_model(arr, radiusWidget.value)
+            masks = _predict_hc_labels_with_ml_model(
+                arr,
+                radiusWidget.value,
+                hcSegmentationModelDropdown.value,
+            )
         
 
 
@@ -1853,7 +1873,11 @@ def jupyterPy(tb):
 
             masks = masks3
         else:
-            masks = _predict_hc_labels_with_ml_model(arr, radiusFbiresWidget.value)
+            masks = _predict_hc_labels_with_ml_model(
+                arr,
+                radiusFbiresWidget.value,
+                hcFibresSegmentationModelDropdown.value,
+            )
 
         try:
             l=tb.app.layers['Masks']
