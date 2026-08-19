@@ -49,6 +49,10 @@ ML_SEGMENTATION_MODELS = {
     'ml_model_fibres': 'ml_models.ihc_segmentation_fibres',
 }
 
+BOUTON_SEGMENTATION_MODELS = {
+    'synapse_unet': 'ml_models.synapse_segmentation',
+}
+
 
 def _load_ml_segmentation_module(model_key):
     try:
@@ -68,6 +72,45 @@ def _predict_hc_labels_with_ml_model(arr, radius, model_key):
     model_module = _load_ml_segmentation_module(model_key)
     min_size = None#int(radius * radius * 3.14 / 2)
     return model_module.predict_labels(arr, min_size=min_size)
+
+
+def _load_bouton_segmentation_module(model_key):
+    try:
+        module_path = BOUTON_SEGMENTATION_MODELS[model_key]
+    except KeyError as exc:
+        raise ValueError(f"Unknown bouton segmentation model: {model_key}") from exc
+
+    try:
+        return import_module(module_path)
+    except ModuleNotFoundError as exc:
+        if exc.name != 'ml_models':
+            raise
+        return import_module(f"src.{module_path}")
+
+
+def _predict_bouton_labels_with_ml_model(arr, model_key):
+    model_module = _load_bouton_segmentation_module(model_key)
+    return model_module.predict_labels(arr)
+
+
+def _filter_and_sort_labels_left_to_right(mask, min_area):
+    mask = measure.label(mask)
+    props = measure.regionprops(mask)
+
+    masks2 = mask.copy()
+    for c in props:
+        if c.area < min_area:
+            masks2[mask == c.label] = 0
+
+    masks2 = measure.label(masks2)
+    props = measure.regionprops(masks2)
+    orderedLabels = np.argsort([c.centroid[1] for c in props]) + 1
+
+    masks3 = masks2.copy()
+    for i, el in enumerate(orderedLabels):
+        masks3[masks2 == el] = i + 1
+
+    return masks3
 
 
 def read_tiff_stack(filepath: str) -> np.ndarray:
@@ -746,6 +789,15 @@ def jupyterPy(tb):
     radiusFbiresWidget = widgets.IntText(value=70,description='Cell radius:',disabled=False)
     annotateFibresButton = widgets.Button(description='4-Annotate fibres',button_style = 'primary') 
     assignFibresButton = widgets.Button(description='5-Pair boutons-hcs',button_style = 'primary') 
+    boutonSegmentationModelDropdown = widgets.Dropdown(
+        options=[
+            ('Synapse U-Net', 'synapse_unet'),
+        ],
+        value='synapse_unet',
+        description='Bouton model:',
+        disabled=False
+    )
+    segmentBoutonsButton = widgets.Button(description='Create bouton labels',button_style = 'primary')
     
     cutoffWidget = widgets.IntText(value=75,description='Cutoff boutons/fibres',disabled=False)
     loadAnnotationsButton =  widgets.Button(description='Load Results',button_style = 'primary') 
@@ -753,7 +805,7 @@ def jupyterPy(tb):
     topBox1 = widgets.HBox([widgets.VBox([plotButton,exportROIsbutton,areaLimitWidget]),boxStack2,boxStack8,boxStack3])
     topBox2 = widgets.HBox([boxStack4,boxStack5,boxStack6, boxStack7])
     topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget]),\
-                            widgets.VBox([segmentHCFibresButton,hcFibresSegmentationModelDropdown,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton]),\
+                            widgets.VBox([segmentHCFibresButton,hcFibresSegmentationModelDropdown,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton,boutonSegmentationModelDropdown,segmentBoutonsButton]),\
                               widgets.VBox([plotFibresButton,exportROIsFibresButton,exportAnnotationsFibresButton]),           
                             loadAnnotationsButton        ])
     
@@ -1885,6 +1937,28 @@ def jupyterPy(tb):
         except: 
             tb.app.add_labels(masks,name='Masks')
     segmentHCFibresButton.on_click(on_segmentHCFibresButton_clicked)
+
+    def on_segmentBoutonsButton_clicked(click):
+        """
+        Segments bouton ROIs using the selected bouton segmentation model.
+        """
+        on_justAvgButton_clicked(None)
+        arr = tb.app.layers['Avg'].data
+        masks = _predict_bouton_labels_with_ml_model(
+            arr,
+            boutonSegmentationModelDropdown.value,
+        )
+        masks = _filter_and_sort_labels_left_to_right(
+            masks,
+            areaLimitFibresWidget.value,
+        )
+
+        try:
+            l=tb.app.layers['SGN ROIs']
+            l.data = masks
+        except:
+            tb.app.add_labels(masks,name='SGN ROIs')
+    segmentBoutonsButton.on_click(on_segmentBoutonsButton_clicked)
 
     def on_plotFibres_clicked(click):
         """
