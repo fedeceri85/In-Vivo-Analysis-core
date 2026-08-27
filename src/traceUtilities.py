@@ -660,7 +660,64 @@ def concatenateRecordings(el,
     return dff0s
 
 
+def combineIndependentRecordingTraces(allcells, alltraces, gap=100, verbose=True):
+    errors = []
+    rid_witherrors = []
+    alltraces_combined = {}
+
+    for rid in allcells['Independent recordings ID'].unique():
+        subcells = allcells[allcells['Independent recordings ID'] == rid]
+        matchedroin = subcells['Matched RoiN'].unique()
+        sequences = subcells['Number in sequence'].unique()
+
+        lengths = {}
+        for seq in sequences:
+            randomcellid = subcells[subcells['Number in sequence'] == seq]['Cell ID'].values[0]
+            lengths[seq] = len(alltraces[randomcellid].dropna())
+
+        if verbose:
+            print(
+                f'Independent recording {rid} has {len(matchedroin)} unique cells '
+                f'and {len(sequences)} sequences with lengths {lengths}'
+            )
+
+        traces_out = np.zeros((sum(lengths.values()) + gap * len(lengths), len(matchedroin) + 1)) * np.nan
+        headers = [f'{rid}-{j}' for j in matchedroin] + ['Time (s)']
+        traces_out = pd.DataFrame(columns=headers, data=traces_out)
+
+        starts = {}
+        startindex = 0
+        for seq in sequences:
+            starts[seq] = startindex
+            startindex += lengths[seq] + gap
+
+        for roiposition, roin in enumerate(matchedroin):
+            for seq in sequences:
+                cellids = subcells[
+                    (subcells['Matched RoiN'] == roin) &
+                    (subcells['Number in sequence'] == seq)
+                ]['Cell ID'].values
+
+                if len(cellids) == 0:
+                    continue
+                if len(cellids) > 1:
+                    errors.append(f'More than one cell ID found for matched roin {roin} and recording {rid}')
+                    rid_witherrors.append(rid)
+                    continue
+
+                trace = alltraces[cellids[0]].dropna()
+                startindex = starts[seq]
+                traces_out.iloc[startindex:startindex + len(trace), roiposition] = trace.values
+
+        traces_out.loc[:, 'Time (s)'] = np.arange(0, traces_out.shape[0]) / subcells['fps'].values[0]
+        alltraces_combined[rid] = traces_out
+
+    return alltraces_combined, errors, rid_witherrors
+
+
 import seaborn as sns
+
+
 def calculateCorrelation(dff0s,
                          min_period,
                          rollingMedianCorrectionNumber=2000,
@@ -671,7 +728,8 @@ def calculateCorrelation(dff0s,
                          highpassOrder=3,
                          regressGlobal=False,
                          rollingPercentileWindowFrames=1200,
-                         rollingPercentile=10):
+                         rollingPercentile=10,
+                         constantDiffThreshold=0.001):
     """
     Calculate correlation matrix between signals and display it as a heatmap.
     Parameters
@@ -704,6 +762,9 @@ def calculateCorrelation(dff0s,
         Window size for rolling percentile detrending (default=1200).
     rollingPercentile : float, optional
         Percentile for rolling baseline detrending (default=10).
+    constantDiffThreshold : float, optional
+        Pairwise first-difference threshold used to remove constant frames before
+        correlation (default=0.001).
     Returns
     -------
     pandas.DataFrame
@@ -720,10 +781,7 @@ def calculateCorrelation(dff0s,
     #min_period = 5*60*el['fps'].values[0]
     dff0s2 = dff0s.copy()
 
-    if 'Time (s)' in dff0s2.columns:
-        signalCols = list(dff0s2.columns[:-1])
-    else:
-        signalCols = list(dff0s2.columns)
+    signalCols = [col for col in dff0s2.columns if col != 'Time (s)']
 
     if preprocessing == 'rolling_median':
         if rollingMedianCorrectionNumber is not None:
@@ -745,12 +803,9 @@ def calculateCorrelation(dff0s,
             windowFrames=rollingPercentileWindowFrames,
             percentile=rollingPercentile
         )
-    #Substitute constant values across columns with nans to avoid undefined correlations
-    dz = np.diff(dff0s2.loc[:, signalCols],axis=0)
-    keep = np.argwhere(dz!=0)[:,0]
-    discard = np.argwhere(dz==0)[:,0]
-    dff0s2.loc[dff0s2.index[discard], signalCols] = np.nan
-        
+    indices_where_constant = dff0s2.loc[:, signalCols].diff().abs() < constantDiffThreshold
+    dff0s2.loc[:, signalCols] = dff0s2.loc[:, signalCols].mask(indices_where_constant)
+
     values = dff0s2.loc[:, signalCols].corr(min_periods=min_period)
 
     mask = np.triu(np.ones_like(values, dtype=bool))
