@@ -674,7 +674,7 @@ def jumpFramesFinder(master,allminima,allmaxima,correctionReferenceTraceDf,tb):
             lastFrameInt.value = lastFrame
 
         try:
-            smoothOrder = el['SmoothOrder']
+            smoothOrder = int(el['SmoothOrder'])
             if (smoothOrder%2)==0:
                 smoothOrder = smoothOrder+1
                 master.loc[xw.value,'SmoothOrder'] = smoothOrder
@@ -1184,7 +1184,7 @@ class JumpFramesFinderPanel:
 
         # Smooth order
         try:
-            smoothOrder = el['SmoothOrder']
+            smoothOrder = int(el['SmoothOrder'])
             if (smoothOrder % 2) == 0:
                 smoothOrder += 1
                 self.master.loc[x, 'SmoothOrder'] = smoothOrder
