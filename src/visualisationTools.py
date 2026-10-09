@@ -1197,20 +1197,21 @@ class JumpFramesFinderPanel:
         if os.path.exists(os.path.join(workingFolder, 'corrReference.npy')):
             r, s, t = tu.loadRoisFromFile(os.path.join(workingFolder, 'corrReference.npy'))
             s = s[firstFrame * el['nChannels']:lastFrame * el['nChannels'], :]
+            if el['nChannels'] == 2:
+                s = s[1::2, :]
+
             if smoothOrder != 1:
                 for i in np.arange(s.shape[1]):
                     s[:, i] = savgol_filter(s[:, i], smoothOrder, 1)
-            if el['nChannels'] == 2:
-                s = s[::2, :]
             ttrace = s.mean(1)
         elif os.path.exists(os.path.join(workingFolder, 'corrReference.csv')):
             s = pd.read_csv(os.path.join(workingFolder, 'corrReference.csv'))
             s = s['Mean'].values
             s = s[firstFrame * el['nChannels']:lastFrame * el['nChannels']]
+            if el['nChannels'] == 2:
+                s = s[1::2]
             if smoothOrder != 1:
                 s = savgol_filter(s, smoothOrder, 1)
-            if el['nChannels'] == 2:
-                s = s[::2]
             ttrace = s
 
         # Sync slider values from master
