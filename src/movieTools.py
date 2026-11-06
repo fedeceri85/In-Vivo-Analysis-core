@@ -789,6 +789,8 @@ def jupyterPy(tb):
     radiusFbiresWidget = widgets.IntText(value=70,description='Cell radius:',disabled=False)
     annotateFibresButton = widgets.Button(description='4-Annotate fibres',button_style = 'primary') 
     assignFibresButton = widgets.Button(description='5-Pair boutons-hcs',button_style = 'primary') 
+    erodesgnButton =   widgets.Button(description='Erode SGN labels',button_style = 'primary')
+
     boutonSegmentationModelDropdown = widgets.Dropdown(
         options=[
             ('Synapse U-Net', 'synapse_unet'),
@@ -804,7 +806,7 @@ def jupyterPy(tb):
     #topBox = widgets.HBox([boxStack,boxStack2,boxStack3,calculateShapesButton,boxStack4,boxStack5])
     topBox1 = widgets.HBox([widgets.VBox([plotButton,exportROIsbutton,areaLimitWidget]),boxStack2,boxStack8,boxStack3])
     topBox2 = widgets.HBox([boxStack4,boxStack5,boxStack6, boxStack7])
-    topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget]),\
+    topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget,erodesgnButton]),\
                             widgets.VBox([segmentHCFibresButton,hcFibresSegmentationModelDropdown,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton,boutonSegmentationModelDropdown,segmentBoutonsButton]),\
                               widgets.VBox([plotFibresButton,exportROIsFibresButton,exportAnnotationsFibresButton]),           
                             loadAnnotationsButton        ])
@@ -1040,6 +1042,22 @@ def jupyterPy(tb):
 
 
     erodeButton.on_click(on_erode_clicked)
+
+    def on_erodesgn_clicked(change):
+        """
+        Erode Masks ROIs by 1 pixel
+        """
+        masks = pyp.pull(pyp.erode_labels(tb.app.layers['SGN ROIs'].data))
+        tb.app.layers['SGN ROIs'].data = masks
+        tb.app.layers['SGN ROIs'].features =  regionprops_table(masks+1,properties=('area','centroid',   # the +1 is so that it correctly allign in napari
+                                    'orientation',
+                                    'axis_major_length',
+                                    'axis_minor_length'))
+        
+
+
+    erodesgnButton.on_click(on_erodesgn_clicked)
+
 
     def on_classify_button(change):
         """
