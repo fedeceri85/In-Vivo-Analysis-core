@@ -26,6 +26,7 @@ plotly
 panel
 bokeh
 jupyter_bokeh
+ruamel
 
 # Bioimaging, signal analysis, and machine learning
 cellpose

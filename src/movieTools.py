@@ -650,7 +650,7 @@ def jupyterPy(tb):
     - Trace extraction and export
     Calcium waves tab:
     - Background subtraction
-    - Wave detection using Voronoi-Otsu labeling
+    - Wave detection using the 3D ML model or Voronoi-Otsu labeling
     - Wave navigation and visualization
     Bouton & fibres tab:
     - Tophat filtering
@@ -710,6 +710,30 @@ def jupyterPy(tb):
     squarifyButton = widgets.Button(description='Make ROIs square',button_style = 'warning')
 
     #Calcium waves buttons
+    waves_module_path = 'ml_models.calcium_waves_segmentation'
+    if __package__:
+        waves_module_path = f'{__package__}.{waves_module_path}'
+    waves_weights = import_module(f'{waves_module_path}.weights')
+    waves_config = import_module(f'{waves_module_path}.config').load_yaml_config(
+        waves_weights.resolve_config_path()
+    )
+    mlWavesButton = widgets.Button(
+        description='ML model (experimental)',
+        button_style='success',
+        icon='magic',
+        tooltip='Detect calcium waves in the selected movie using the 3D model',
+        style={'font_weight': 'bold'},
+        layout=widgets.Layout(width='180px', height='40px', margin='0 0 10px 0'),
+    )
+    mlWavesThreshold = widgets.FloatSlider(
+        description='Threshold:',
+        min=0.0,
+        max=1.0,
+        step=0.01,
+        value=waves_config['inference']['threshold'],
+        readout_format='.2f',
+        continuous_update=False,
+    )
     subtractBackgroundButton =   widgets.Button(description='Subtract background',button_style = 'primary')
     subtract10BackgroundButton =   widgets.Button(description='Subtract X background',button_style = 'primary')
     loadhclineButton = widgets.Button(description='Load HC line',button_style = 'primary')
@@ -805,7 +829,10 @@ def jupyterPy(tb):
     loadAnnotationsButton =  widgets.Button(description='Load Results',button_style = 'primary') 
     #topBox = widgets.HBox([boxStack,boxStack2,boxStack3,calculateShapesButton,boxStack4,boxStack5])
     topBox1 = widgets.HBox([widgets.VBox([plotButton,exportROIsbutton,areaLimitWidget]),boxStack2,boxStack8,boxStack3])
-    topBox2 = widgets.HBox([boxStack4,boxStack5,boxStack6, boxStack7])
+    topBox2 = widgets.VBox([
+        widgets.HBox([mlWavesButton, mlWavesThreshold]),
+        widgets.HBox([boxStack4,boxStack5,boxStack6,boxStack7]),
+    ])
     topBox3 = widgets.HBox([widgets.VBox([topHatRadius,gaussSigmaFibresWidget,spotSFibresWidget,voronoiFibresButton,areaLimitFibresWidget,erodesgnButton]),\
                             widgets.VBox([segmentHCFibresButton,hcFibresSegmentationModelDropdown,radiusFbiresWidget,annotateFibresButton,cutoffWidget,assignFibresButton,boutonSegmentationModelDropdown,segmentBoutonsButton]),\
                               widgets.VBox([plotFibresButton,exportROIsFibresButton,exportAnnotationsFibresButton]),           
@@ -1424,6 +1451,9 @@ def jupyterPy(tb):
             except:
                 labs[framesXChunk2*i:,:,:] = cle.merge_touching_labels(labs[framesXChunk2*i:,:,:])
 
+        update_wave_labels(labs)
+
+    def update_wave_labels(labs):
         # Optional spatial filter: remove only waves fully outside SelectedArea
         if 'SelectedArea' in [layer.name for layer in tb.app.layers]:
             selectedArea = tb.app.layers['SelectedArea'].data
@@ -1474,6 +1504,32 @@ def jupyterPy(tb):
         })
         print(df.sort_values('Start',axis=0))
     voronoiButton.on_click(on_voronoiButton_clicked)
+
+    def on_mlWaves_clicked(change):
+        model_module = import_module(waves_module_path)
+        mlWavesButton.disabled = True
+        try:
+            labs, probabilities = model_module.predict_labels(
+                tb.app.layers[layersDropdown.value].data,
+                threshold=mlWavesThreshold.value,
+                return_probabilities=True,
+            )
+            if 'Wave3DProbabilities' in [layer.name for layer in tb.app.layers]:
+                tb.app.layers['Wave3DProbabilities'].data = probabilities
+                tb.app.layers['Wave3DProbabilities'].visible = True
+            else:
+                tb.app.add_image(
+                    probabilities,
+                    name='Wave3DProbabilities',
+                    colormap='magma',
+                    contrast_limits=(0, 1),
+                    blending='additive',
+                    opacity=0.5,
+                )
+            update_wave_labels(labs)
+        finally:
+            mlWavesButton.disabled = False
+    mlWavesButton.on_click(on_mlWaves_clicked)
     
     def on_resetLabels_clicked(change):
         """

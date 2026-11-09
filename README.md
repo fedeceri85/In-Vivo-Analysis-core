@@ -48,6 +48,21 @@ Processed parameter files are saved in the `parameters` directory with correspon
 
 The main processing pipeline is implemented in `batchMotionCorrect.ipynb`. Configure the `fileHeader` variable to specify which experiment types to process.
 
+Calcium-wave inference accepts a movie array in `(time, height, width)` order:
+
+```python
+from src.ml_models import calcium_waves_segmentation as waves
+
+mask, probabilities = waves.predict_binary(movie, return_probabilities=True)
+labels = waves.predict_labels(movie)
+
+# Use fewer windows per batch when accelerator memory is limited.
+labels = waves.predict_labels(movie, sw_batch_size=1)
+```
+
+The configuration and weights are downloaded from Hugging Face on first use and
+cached in `models/calcium_waves_segmentation`. The movie and assembled predictions
+stay on CPU while windows run on the automatically selected CUDA, MPS, or CPU device.
 
 ## Data Organization
 
