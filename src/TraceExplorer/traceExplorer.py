@@ -233,6 +233,7 @@ class mainWindow(pg.GraphicsView):
                 {'name':'Height','type':'slider','limits':[0,10],'step':0.05},
                 {'name':'Correlation','type':'slider','limits':[0,1],'step':0.05},
                 {'name':'Min duration (s)','type':'float','value':0,'limits':[0,10],'step':0.05},
+                {'name':'Savgol order', 'type':'int', 'value':21, 'limits':[3,21],'step':2},
                 {'name':'Delete points','type':'bool','value':False},
                 {'name':'Add points','type':'bool','value':False},
                 {'name':'Save','type':'action'},
@@ -471,7 +472,7 @@ class mainWindow(pg.GraphicsView):
         distance = self.p2['Distance']
         xwCorrelation = self.p2['Correlation']
         minDuration = self.p2['Min duration (s)']
-
+        savgol_order = self.p2['Savgol order']
         use_zscore = self.p2['Use MAD z-score']
 
         if 'Peak positions' not in self.master.columns:
@@ -488,7 +489,7 @@ class mainWindow(pg.GraphicsView):
             # Optionally normalize per-cell before peak detection
             if use_zscore:
                 # Remove slow drift before computing MAD so drifty traces don't inflate the noise estimate
-                detect_trace = detrend_z_score(dff0, rollingN=2000, savgol_order=21)
+                detect_trace = detrend_z_score(dff0, rollingN=2000, savgol_order=savgol_order)
 
             else:
                 detect_trace = dff0
@@ -509,6 +510,7 @@ class mainWindow(pg.GraphicsView):
             self.master.loc[j, 'Peak correlation'] = xwCorrelation
             self.master.loc[j, 'Use MAD z-score'] = bool(use_zscore)
             self.master.loc[j, 'Min duration (s)'] = minDuration
+            self.master.loc[j,'Savgol order'] = savgol_order
             fps1 = int(row['fps']*1.5)
             fps2 = int(row['fps'])
 
@@ -622,6 +624,12 @@ class mainWindow(pg.GraphicsView):
             value = parse_float_or_none(self.master['Min duration (s)'].values[0])
             if value is not None:
                 self.p2.keys()['Min duration (s)'].setValue(value)
+        
+        if 'Savgol order' in self.master.columns:
+            value = parse_float_or_none(self.master['Savgol order'].values[0])
+            if value is not None:
+                self.p2.keys()['Savgol order'].setValue(value)
+                
 
 
     def loadTracesCb(self):
@@ -685,6 +693,10 @@ class mainWindow(pg.GraphicsView):
                 value = parse_float_or_none(self.el['Min duration (s)'].values[0])
                 if value is not None:
                     self.p2.keys()['Min duration (s)'].setValue(value)
+            if 'Savgol order' in self.el.columns:
+                value = parse_float_or_none(self.el['Savgol order'].values[0])
+                if value is not None:
+                    self.p2.keys()['Savgol order'].setValue(value)
 
             self.currentIds = self.el[self.p['Cell ID column']].values
             if len(self.colorsDict)>0:
@@ -735,7 +747,7 @@ class mainWindow(pg.GraphicsView):
                         import sys
                         sys.path.append('../')
                         import traceUtilities as tu
-                        trace_z = tu.detrend_z_score(trace, rollingN=2000, savgol_order=21)
+                        trace_z = tu.detrend_z_score(trace, rollingN=2000, savgol_order=self.p2['Savgol order'])
                         results_full = peak_widths(trace_z,xpeak,rel_height=0.5)
                         sp2 = pg.ScatterPlotItem(x[results_full[2].astype(int)],trace[results_full[2].astype(int)],hoverable=True,hoversize=20,symbol='+')
                         sp3 = pg.ScatterPlotItem(x[results_full[3].astype(int)],trace[results_full[3].astype(int)],hoverable=True,hoversize=20,symbol='t')
@@ -763,7 +775,10 @@ class mainWindow(pg.GraphicsView):
                 value = parse_float_or_none(self.el['Min duration (s)'].values[0])
                 if value is not None:
                     self.p2.keys()['Min duration (s)'].setValue(value)
-            
+            if 'Savgol order' in self.el.columns:
+                value = parse_float_or_none(self.el['Savgol order'].values[0])
+                if value is not None:
+                    self.p2.keys()['Savgol order'].setValue(value)          
             
             #print(self.alltraces[ids.values].dropna())
             y = self.alltraces[self.currentIds].dropna().values
@@ -810,7 +825,11 @@ class mainWindow(pg.GraphicsView):
 
 
                     if self.p['Show peak half width']:
-                        results_full = peak_widths(trace,xpeak,rel_height=0.5)
+                        import sys
+                        sys.path.append('../')
+                        import traceUtilities as tu
+                        trace_z = tu.detrend_z_score(trace, rollingN=2000, savgol_order=self.p2['Savgol order'])
+                        results_full = peak_widths(trace_z,xpeak,rel_height=0.5)
 
                         sp2 = pg.ScatterPlotItem(x[results_full[2].astype(int)],trace[results_full[2].astype(int)],hoverable=True,hoversize=20,symbol='+')
                         sp3 = pg.ScatterPlotItem(x[results_full[3].astype(int)],trace[results_full[3].astype(int)],hoverable=True,hoversize=20,symbol='t')

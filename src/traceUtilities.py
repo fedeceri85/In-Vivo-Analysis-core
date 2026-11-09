@@ -898,3 +898,43 @@ def detrend_z_score(trace,rollingN=2000,savgol_order=21):
     if savgol_order is not None:
         detect_trace = savgol_filter(detect_trace,savgol_order, 1)
     return detect_trace
+
+
+def correct_peak_position(trace,peaks,window=10):
+    '''
+    Peak values need to be on a local max to be able to calculate properties like width. 
+    Since it is beneficial to identify peak positions on a highly smoothed trace, which distorts peak shapes, this
+    function readjust the peaks on the original (or on a less smoothed) trace.
+    traces: original signal
+    peaks: position of the peaks calculated on the heavily-smoothed trace
+    window: frame interval where to look for the real peaks
+    '''
+    corrected_peaks = []
+    for p in peaks:
+        start = max(p-window,0)
+        end = min(p+window,len(trace))
+        trace_segment = [trace[start:end]]
+        try:
+            new_peak = np.argmax(trace_segment) + start
+        except:
+            print(start,end)
+        corrected_peaks.append(new_peak)
+
+    return corrected_peaks
+
+def peak_widths(trace,peaks,rel_height = 0.5,window=10):
+    '''
+    Return peak widths, adjusting the position of the peaks before to ensure that they are on a max. 
+    '''
+    from scipy.signal import peak_widths
+    corrected_peaks = correct_peak_position(trace, peaks, window=window)
+
+    peak_widths_results = peak_widths(trace, corrected_peaks, rel_height=rel_height)[0]
+    peak_widths_results[peak_widths_results==0] = np.nan
+    total_missed_peaks = sum(np.isnan(peak_widths_results))
+    if (total_missed_peaks > 0):
+        print(f'It was not possible to compute the width for a total of {total_missed_peaks} peaks of total {len(peaks)}.')
+
+
+    return peak_widths_results
+
