@@ -67,10 +67,10 @@ def _load_ml_segmentation_module(model_key):
             raise
         return import_module(f"src.{module_path}")
 
-
+import math
 def _predict_hc_labels_with_ml_model(arr, radius, model_key):
     model_module = _load_ml_segmentation_module(model_key)
-    min_size = None#int(radius * radius * 3.14 / 2)
+    min_size = int((radius/2)**2/(9) * math.pi()) #None#int(radius * radius * 3.14 / 2) #the formula is so that a value from the gui of 100 corresponds to a min_size of 800. 
     return model_module.predict_labels(arr, min_size=min_size)
 
 
@@ -685,6 +685,11 @@ def jupyterPy(tb):
 
     avgLimitLeft = widgets.IntText(value=0,description='Avg start frame:',disabled=False)
     avgLimitRight = widgets.IntText(value=100,description='Avg end frame:',disabled=False)
+    exportFigureButton = widgets.Button(
+        description='Export figure',
+        button_style='success',
+        tooltip='Choose where to save the current napari figure as a PNG',
+    )
 
 
 
@@ -767,7 +772,7 @@ def jupyterPy(tb):
     saveKymoShapesButton =  widgets.Button(description='Save kymo shapes',button_style = 'primary')
     loadKymoShapesButton =  widgets.Button(description='Load kymo shapes',button_style = 'primary')
 
-    boxStack  = widgets.VBox([layersDropdown,justAvgButton, avgLimitLeft, avgLimitRight])
+    boxStack  = widgets.VBox([layersDropdown,justAvgButton, avgLimitLeft, avgLimitRight, exportFigureButton])
 
 
     boxStack2  = widgets.VBox([avgButton,hcSegmentationModelDropdown,erodeButton,classifyButton,radiusWidget,cellprobSlider])
@@ -992,6 +997,23 @@ def jupyterPy(tb):
         except:
             tb.app.add_image(arr,name='Avg')
     justAvgButton.on_click(on_justAvgButton_clicked)
+
+    def on_exportFigure_clicked(c):
+        from qtpy.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getSaveFileName(
+            tb.app.window._qt_window,
+            'Export napari figure',
+            os.path.join(tb.folder, 'napari_view.png'),
+            'PNG image (*.png)',
+        )
+        if not path:
+            return
+        if not os.path.splitext(path)[1]:
+            path += '.png'
+        tb.app.export_figure(path=path)
+
+    exportFigureButton.on_click(on_exportFigure_clicked)
 
     def on_avgButton_clciked(change):
 
